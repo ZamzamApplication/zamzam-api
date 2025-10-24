@@ -1,0 +1,40 @@
+package com.zamzam.zamzamapi.entity;
+
+import jakarta.persistence.*;
+import lombok.Data;
+
+import java.time.LocalDate;
+import java.util.UUID;
+@Entity
+@Table(name = "daily_progress")
+@Data
+public class DailyProgress {
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @ManyToOne
+    private User student;
+
+    @ManyToOne
+    private Halaqa halaqa;
+
+    private LocalDate date;
+
+    @Column(columnDefinition = "TEXT")
+    private String hifz;
+
+    @Column(columnDefinition = "TEXT")
+    private String revision;
+
+    @Column(columnDefinition = "TEXT")
+    private String remarks;
+
+    private Integer rating; // e.g., 1–5
+
+    // Getters and setters
+}
+
+
+
+

@@ -1,0 +1,39 @@
+package com.zamzam.zamzamapi.entity;
+
+import jakarta.persistence.*;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+@Entity
+@Table(name = "halaqat")
+@Data
+public class Halaqa {
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    private String name;
+
+    @ManyToOne
+    private Organization organization;
+
+    @ManyToOne
+    private User teacher; // Must have role = TEACHER
+
+    private LocalDateTime createdAt;
+
+    @ManyToMany
+    @JoinTable(
+            name = "halaqa_students",
+            joinColumns = @JoinColumn(name = "halaqa_id"),
+            inverseJoinColumns = @JoinColumn(name = "student_id")
+    )
+    private Set<User> students = new HashSet<>();
+
+    @OneToMany(mappedBy = "halaqa")
+    private Set<DailyProgress> progressEntries = new HashSet<>();
+
+    // Getters and setters
+}

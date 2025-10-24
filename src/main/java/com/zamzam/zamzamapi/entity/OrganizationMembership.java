@@ -1,0 +1,32 @@
+package com.zamzam.zamzamapi.entity;
+
+import jakarta.persistence.*;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Entity
+@Table(name = "organization_memberships")
+@Data
+public class OrganizationMembership {
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @ManyToOne
+    private User user;
+    @ManyToOne
+    private Organization organization;
+
+    @Enumerated(EnumType.STRING)
+    private Role role;
+
+    private LocalDateTime joinedAt;
+
+    public enum Role {
+        ORG_ADMIN, TEACHER, STUDENT, PARENT
+    }
+
+    // Getters and setters
+}
