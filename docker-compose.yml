@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: zamzam-postgres
+    environment:
+      POSTGRES_DB: zamzam_db
+      POSTGRES_USER: zamzam_user
+      POSTGRES_PASSWORD: zamzam_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
