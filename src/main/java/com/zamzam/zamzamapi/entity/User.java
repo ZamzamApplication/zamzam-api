@@ -19,8 +19,7 @@ public class User {
     private String email;
     private String passwordHash;
 
-    @Enumerated(EnumType.STRING)
-    private Role role;
+    private Boolean isAdmin;
 
     private LocalDateTime createdAt;
 
@@ -45,5 +44,4 @@ public class User {
     @ManyToMany(mappedBy = "students")
     private Set<Halaqa> halaqat = new HashSet<>();
 
-    // Getters and setters
 }

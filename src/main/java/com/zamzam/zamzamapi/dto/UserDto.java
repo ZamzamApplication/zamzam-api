@@ -8,6 +8,7 @@ public class UserDto {
     public UUID id;
     public String name;
     public String email;
+    public Boolean isAdmin;
     public String role;
     public LocalDateTime createdAt;
     public Set<UUID> childrenIds;

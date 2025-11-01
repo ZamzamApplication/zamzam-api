@@ -9,7 +9,9 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.time.LocalDateTime;
@@ -27,7 +29,7 @@ public class UserService implements UserDetailsService {
         dto.id = user.getId();
         dto.name = user.getName();
         dto.email = user.getEmail();
-        dto.role = user.getRole() != null ? user.getRole().name() : null;
+        dto.role = user.getIsAdmin() ? "ADMIN" : "USER";
         dto.createdAt = user.getCreatedAt();
         dto.childrenIds = user.getChildren() != null ? user.getChildren().stream().map(User::getId).collect(Collectors.toSet()) : Set.of();
         dto.parentIds = user.getParents() != null ? user.getParents().stream().map(User::getId).collect(Collectors.toSet()) : Set.of();
@@ -52,17 +54,25 @@ public class UserService implements UserDetailsService {
         return org.springframework.security.core.userdetails.User.builder()
                 .username(user.getEmail())
                 .password(user.getPasswordHash())
-                .roles(user.getRole() != null ? user.getRole().name() : "USER")
                 .build();
     }
 
     public UserDto createUser(CreateUserRequest request) {
+        //  check if email already exist
+        if (userRepository.findByEmail(request.email) != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+        }
+        System.out.println("Creating user with email: " + request.email);
         User user = new User();
         user.setName(request.name);
         user.setEmail(request.email);
         user.setPasswordHash(passwordEncoder.encode(request.password));
-        user.setRole(request.role != null ? User.Role.valueOf(request.role) : null);
+        user.setIsAdmin(false);
         user.setCreatedAt(LocalDateTime.now());
+
+
+
+
         user = userRepository.save(user);
         return toDto(user);
     }
