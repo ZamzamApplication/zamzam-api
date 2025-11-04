@@ -42,6 +42,61 @@ public class HalaqaService {
         return halaqaRepository.findById(id).map(this::toDto).orElse(null);
     }
 
+    public List<HalaqaMemberDto> getHalaqaMembers(UUID id) {
+        Halaqa h = halaqaRepository.findByIdWithMembers(id).orElse(null);
+        if (h == null) {
+            throw new ApiException(404, "Halaqa with id '" + id + "' not found.");
+        }
+        List<HalaqaMemberDto> members = new ArrayList<>();
+        if (h.getTeacher() != null) {
+            HalaqaMemberDto teacherDto = new HalaqaMemberDto();
+            teacherDto.id = h.getTeacher().getId();
+            teacherDto.name = h.getTeacher().getName();
+            teacherDto.role = "TEACHER";
+            members.add(teacherDto);
+        }
+        if (h.getStudents() != null) {
+            for (User student : h.getStudents()) {
+                HalaqaMemberDto studentDto = new HalaqaMemberDto();
+                studentDto.id = student.getId();
+                studentDto.name = student.getName();
+                studentDto.role = "STUDENT";
+                members.add(studentDto);
+            }
+        }
+        return members;
+    }
+
+    public HalaqaMemberDto addHalaqaMember(UUID halaqaId, AddHalaqaMemberRequest request) {
+        Halaqa h = halaqaRepository.findById(halaqaId).orElse(null);
+        if (h == null) {
+            throw new ApiException(404, "Halaqa with id '" + halaqaId + "' not found.");
+        }
+        User user = userRepository.findById(request.userId).orElse(null);
+        if (user == null) {
+            throw new ApiException(404, "User with id '" + request.userId+ "' not found.");
+        }
+        if (request.role.equals("STUDENT")) {
+            if (h.getStudents() == null) {
+                h.setStudents(new HashSet<>());
+            }
+            if (h.getStudents().contains(user)) {
+                throw new ApiException(400, "User with id '" + request.userId+ "' is already a student in this halaqa.");
+            }
+            h.getStudents().add(user);
+        } else if (request.role.equals("TEACHER")) {
+            h.setTeacher(user);
+        } else {
+            throw new ApiException(400, "Invalid role '" + request.role + "'. Must be 'STUDENT' or 'TEACHER'.");
+        }
+        halaqaRepository.save(h);
+        HalaqaMemberDto memberDto = new HalaqaMemberDto();
+        memberDto.id = user.getId();
+        memberDto.name = user.getName();
+        memberDto.role = request.role;
+        return memberDto;
+    }
+
     public HalaqaDto createHalaqa(CreateHalaqaRequest request) {
         if (request.organizationId == null) {
             throw new ApiException(400, "Organization ID must be provided.");
@@ -61,8 +116,13 @@ public class HalaqaService {
         return toDto(h);
     }
 
+    public List<HalaqaDto> getOrganizationHalaqat(UUID organizationId) {
+        return halaqaRepository.findByOrganizationId(organizationId).stream().map(this::toDto).collect(Collectors.toList());
+    }
+
     public void deleteHalaqa(UUID id) {
         halaqaRepository.deleteById(id);
     }
+
 }
 

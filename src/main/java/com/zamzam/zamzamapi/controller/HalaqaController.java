@@ -24,6 +24,25 @@ public class HalaqaController {
         return halaqaService.getHalaqaById(id);
     }
 
+    @GetMapping("/organization/{id}")
+    public List<HalaqaDto> getOrganizationHalaqat(@PathVariable UUID id) {
+        return halaqaService.getOrganizationHalaqat(id);
+    }
+
+    @GetMapping("/{id}/members")
+    public List<HalaqaMemberDto> getHalaqaMembers(@PathVariable UUID id) {
+        return halaqaService.getHalaqaMembers(id);
+    }
+
+    @PostMapping("/{halaqaId}/member")
+    public ResponseEntity<?> addHalaqaMember(@PathVariable UUID halaqaId, @RequestBody AddHalaqaMemberRequest request) {
+        try {
+            HalaqaMemberDto member = halaqaService.addHalaqaMember(halaqaId, request);
+            return ResponseEntity.ok(member);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
     @PostMapping
     public ResponseEntity<?> createHalaqa(@RequestBody CreateHalaqaRequest request) {
         try {
