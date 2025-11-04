@@ -2,8 +2,11 @@ package com.zamzam.zamzamapi.service;
 
 import com.zamzam.zamzamapi.dto.UserDto;
 import com.zamzam.zamzamapi.dto.CreateUserRequest;
+import com.zamzam.zamzamapi.dto.OrganizationDto;
 import com.zamzam.zamzamapi.entity.User;
+import com.zamzam.zamzamapi.entity.OrganizationMembership;
 import com.zamzam.zamzamapi.repository.UserRepository;
+import com.zamzam.zamzamapi.repository.OrganizationMembershipRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -22,6 +25,12 @@ public class UserService implements UserDetailsService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private OrganizationMembershipRepository organizationMembershipRepository;
+
+    @Autowired
+    private OrganizationService organizationService;
 
     private UserDto toDto(User user) {
         UserDto dto = new UserDto();
@@ -73,6 +82,13 @@ public class UserService implements UserDetailsService {
 
     public void deleteUser(UUID id) {
         userRepository.deleteById(id);
+    }
+
+    public List<OrganizationDto> getOrganizationsForUser(UUID userId) {
+        List<OrganizationMembership> memberships = organizationMembershipRepository.findByUserId(userId);
+        return memberships.stream()
+            .map(m -> organizationService.toDto(m.getOrganization()))
+            .collect(Collectors.toList());
     }
 }
 

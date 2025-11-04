@@ -24,6 +24,11 @@ public class OrganizationController {
         return organizationService.getOrganizationById(id);
     }
 
+    @GetMapping("user/{userId}")
+    public List<OrganizationDto> getOrganizationsByUserId(@PathVariable UUID userId) {
+        return organizationService.getOrganizationsByUserId(userId);
+    }
+
     @PostMapping
     public ResponseEntity<?> createOrganization(@RequestBody CreateOrganizationRequest request) {
         try {

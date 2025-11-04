@@ -1,7 +1,6 @@
 package com.zamzam.zamzamapi.service;
 
 import com.zamzam.zamzamapi.dto.*;
-import com.zamzam.zamzamapi.entity.Halaqa;
 import com.zamzam.zamzamapi.entity.Organization;
 import com.zamzam.zamzamapi.entity.OrganizationMembership;
 import com.zamzam.zamzamapi.entity.User;
@@ -21,7 +20,7 @@ public class OrganizationService {
     @Autowired
     private UserRepository userRepository;
 
-    private OrganizationDto toDto(Organization org) {
+    public OrganizationDto toDto(Organization org) {
         OrganizationDto dto = new OrganizationDto();
         dto.id = org.getId();
         dto.name = org.getName();
@@ -36,6 +35,16 @@ public class OrganizationService {
 
     public OrganizationDto getOrganizationById(UUID id) {
         return organizationRepository.findById(id).map(this::toDto).orElse(null);
+    }
+
+    public List<OrganizationDto> getOrganizationsByUserId(UUID userId) {
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) {
+            throw new ApiException(404, "User with id '" + userId + "' not found.");
+        }
+        List<Organization> orgs = organizationRepository.getByUserId(userId);
+
+        return orgs.stream().map(this::toDto).collect(Collectors.toList());
     }
 
     public OrganizationDto createOrganization(CreateOrganizationRequest request) {

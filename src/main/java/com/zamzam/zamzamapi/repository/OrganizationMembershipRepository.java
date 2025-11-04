@@ -10,5 +10,7 @@ public interface OrganizationMembershipRepository extends JpaRepository<Organiza
 
     @Query("SELECT m FROM OrganizationMembership m WHERE m.organization.id = :organizationId")
     List<OrganizationMembership> findByOrganizationId(UUID organizationId);
+
+    List<OrganizationMembership> findByUserId(UUID userId);
 }
 

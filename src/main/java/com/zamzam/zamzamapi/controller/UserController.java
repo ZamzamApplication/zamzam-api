@@ -2,6 +2,7 @@ package com.zamzam.zamzamapi.controller;
 
 import com.zamzam.zamzamapi.dto.CreateUserRequest;
 import com.zamzam.zamzamapi.dto.UserDto;
+import com.zamzam.zamzamapi.dto.OrganizationDto;
 import com.zamzam.zamzamapi.service.UserService;
 import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,11 @@ public class UserController {
     @GetMapping("/{id}")
     public UserDto getUser(@PathVariable UUID id) {
         return userService.getUserById(id);
+    }
+
+    @GetMapping("/{userId}/organizations")
+    public List<OrganizationDto> getUserOrganizations(@PathVariable UUID userId) {
+        return userService.getOrganizationsForUser(userId);
     }
 
     @PostMapping
