@@ -9,9 +9,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
-import org.springframework.http.HttpStatus;
+import com.zamzam.zamzamapi.exception.ApiException;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.time.LocalDateTime;
@@ -58,21 +57,16 @@ public class UserService implements UserDetailsService {
     }
 
     public UserDto createUser(CreateUserRequest request) {
-        //  check if email already exist
         if (userRepository.findByEmail(request.email) != null) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
+            throw new ApiException(409, "Email already exists");
         }
-        System.out.println("Creating user with email: " + request.email);
+
         User user = new User();
         user.setName(request.name);
         user.setEmail(request.email);
         user.setPasswordHash(passwordEncoder.encode(request.password));
         user.setIsAdmin(false);
         user.setCreatedAt(LocalDateTime.now());
-
-
-
-
         user = userRepository.save(user);
         return toDto(user);
     }

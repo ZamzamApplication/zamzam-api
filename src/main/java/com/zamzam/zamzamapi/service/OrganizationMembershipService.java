@@ -41,12 +41,15 @@ public class OrganizationMembershipService {
 
     public OrganizationMembershipDto createMembership(CreateOrganizationMembershipRequest request) {
         OrganizationMembership m = new OrganizationMembership();
-        if (request.userId != null) {
-            userRepository.findById(request.userId).ifPresent(m::setUser);
+        if (request.userId == null) {
+            throw new IllegalArgumentException("User ID must be provided.");
         }
-        if (request.organizationId != null) {
-            organizationRepository.findById(request.organizationId).ifPresent(m::setOrganization);
+        if (request.organizationId == null) {
+            throw new IllegalArgumentException("Organization ID must be provided.");
         }
+
+        organizationRepository.findById(request.organizationId).ifPresent(m::setOrganization);
+        userRepository.findById(request.userId).ifPresent(m::setUser);
         m.setRole(request.role != null ? OrganizationMembership.Role.valueOf(request.role) : null);
         m.setJoinedAt(LocalDateTime.now());
         m = organizationMembershipRepository.save(m);

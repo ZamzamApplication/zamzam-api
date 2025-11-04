@@ -2,7 +2,9 @@ package com.zamzam.zamzamapi.controller;
 
 import com.zamzam.zamzamapi.dto.*;
 import com.zamzam.zamzamapi.service.OrganizationMembershipService;
+import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
@@ -23,8 +25,13 @@ public class OrganizationMembershipController {
     }
 
     @PostMapping
-    public OrganizationMembershipDto createMembership(@RequestBody CreateOrganizationMembershipRequest request) {
-        return organizationMembershipService.createMembership(request);
+    public ResponseEntity<?> createMembership(@RequestBody CreateOrganizationMembershipRequest request) {
+        try {
+            OrganizationMembershipDto membership = organizationMembershipService.createMembership(request);
+            return ResponseEntity.ok(membership);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
     }
 
     @DeleteMapping("/{id}")

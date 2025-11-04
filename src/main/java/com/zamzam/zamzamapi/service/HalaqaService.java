@@ -7,6 +7,7 @@ import com.zamzam.zamzamapi.entity.User;
 import com.zamzam.zamzamapi.repository.HalaqaRepository;
 import com.zamzam.zamzamapi.repository.OrganizationRepository;
 import com.zamzam.zamzamapi.repository.UserRepository;
+import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
@@ -42,15 +43,20 @@ public class HalaqaService {
     }
 
     public HalaqaDto createHalaqa(CreateHalaqaRequest request) {
+        if (request.organizationId == null) {
+            throw new ApiException(400, "Organization ID must be provided.");
+        }
+        if (request.teacherId == null) {
+            throw new ApiException(400, "Teacher ID must be provided.");
+        }
+        if (halaqaRepository.findByNameAndOrganizationId(request.name, request.organizationId).isPresent()) {
+            throw new ApiException(400, "Halaqa with name '" + request.name + "' already exists in the organization.");
+        }
         Halaqa h = new Halaqa();
         h.setName(request.name);
         h.setCreatedAt(LocalDateTime.now());
-        if (request.organizationId != null) {
-            organizationRepository.findById(request.organizationId).ifPresent(h::setOrganization);
-        }
-        if (request.teacherId != null) {
-            userRepository.findById(request.teacherId).ifPresent(h::setTeacher);
-        }
+        userRepository.findById(request.teacherId).ifPresent(h::setTeacher);
+        organizationRepository.findById(request.organizationId).ifPresent(h::setOrganization);
         h = halaqaRepository.save(h);
         return toDto(h);
     }

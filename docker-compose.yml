@@ -14,5 +14,18 @@ services:
       - postgres_data:/var/lib/postgresql
     restart: unless-stopped
 
+  zamzam-api:
+    build: .
+    container_name: zamzam-api
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/zamzam_db
+      - SPRING_DATASOURCE_USERNAME=zamzam_user
+      - SPRING_DATASOURCE_PASSWORD=zamzam_password
+    restart: unless-stopped
+
 volumes:
   postgres_data:

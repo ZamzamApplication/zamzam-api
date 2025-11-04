@@ -2,7 +2,9 @@ package com.zamzam.zamzamapi.controller;
 
 import com.zamzam.zamzamapi.dto.*;
 import com.zamzam.zamzamapi.service.HalaqaService;
+import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
@@ -23,8 +25,13 @@ public class HalaqaController {
     }
 
     @PostMapping
-    public HalaqaDto createHalaqa(@RequestBody CreateHalaqaRequest request) {
-        return halaqaService.createHalaqa(request);
+    public ResponseEntity<?> createHalaqa(@RequestBody CreateHalaqaRequest request) {
+        try {
+            HalaqaDto halaqa = halaqaService.createHalaqa(request);
+            return ResponseEntity.ok(halaqa);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
     }
 
     @DeleteMapping("/{id}")

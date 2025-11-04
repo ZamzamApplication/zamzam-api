@@ -1,10 +1,13 @@
 package com.zamzam.zamzamapi.service;
 
 import com.zamzam.zamzamapi.dto.*;
+import com.zamzam.zamzamapi.entity.Halaqa;
 import com.zamzam.zamzamapi.entity.Organization;
+import com.zamzam.zamzamapi.entity.OrganizationMembership;
 import com.zamzam.zamzamapi.entity.User;
 import com.zamzam.zamzamapi.repository.OrganizationRepository;
 import com.zamzam.zamzamapi.repository.UserRepository;
+import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
@@ -24,8 +27,6 @@ public class OrganizationService {
         dto.name = org.getName();
         dto.createdById = org.getCreatedBy() != null ? org.getCreatedBy().getId() : null;
         dto.createdAt = org.getCreatedAt();
-        dto.memberIds = org.getMembers() != null ? org.getMembers().stream().map(m -> m.getId()).collect(Collectors.toSet()) : Set.of();
-        dto.halaqatIds = org.getHalaqat() != null ? org.getHalaqat().stream().map(h -> h.getId()).collect(Collectors.toSet()) : Set.of();
         return dto;
     }
 
@@ -38,6 +39,9 @@ public class OrganizationService {
     }
 
     public OrganizationDto createOrganization(CreateOrganizationRequest request) {
+        if (organizationRepository.findByName(request.name).isPresent()) {
+            throw new ApiException(400, "Organization with name '" + request.name + "' already exists.");
+        }
         Organization org = new Organization();
         org.setName(request.name);
         org.setCreatedAt(LocalDateTime.now());
