@@ -2,6 +2,7 @@ package com.zamzam.zamzamapi.service;
 
 import com.zamzam.zamzamapi.dto.UserDto;
 import com.zamzam.zamzamapi.dto.CreateUserRequest;
+import com.zamzam.zamzamapi.dto.UpdateUserRequest;
 import com.zamzam.zamzamapi.dto.OrganizationDto;
 import com.zamzam.zamzamapi.entity.User;
 import com.zamzam.zamzamapi.entity.OrganizationMembership;
@@ -77,6 +78,21 @@ public class UserService implements UserDetailsService {
         user.setIsAdmin(false);
         user.setCreatedAt(LocalDateTime.now());
         user = userRepository.save(user);
+        return toDto(user);
+    }
+
+    public UserDto updateUser(UUID id, UpdateUserRequest request) {
+        User user = userRepository.findById(id).orElseThrow(() -> new ApiException(404, "User not found"));
+        if (request.getName() != null) {
+            user.setName(request.getName());
+        }
+        if (request.getEmail() != null) {
+            user.setEmail(request.getEmail());
+        }
+        if (request.getPassword() != null) {
+            user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        }
+        userRepository.save(user);
         return toDto(user);
     }
 

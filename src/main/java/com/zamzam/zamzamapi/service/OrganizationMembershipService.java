@@ -7,6 +7,7 @@ import com.zamzam.zamzamapi.entity.User;
 import com.zamzam.zamzamapi.repository.OrganizationMembershipRepository;
 import com.zamzam.zamzamapi.repository.OrganizationRepository;
 import com.zamzam.zamzamapi.repository.UserRepository;
+import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
@@ -53,6 +54,15 @@ public class OrganizationMembershipService {
         m.setRole(request.role != null ? OrganizationMembership.Role.valueOf(request.role) : null);
         m.setJoinedAt(LocalDateTime.now());
         m = organizationMembershipRepository.save(m);
+        return toDto(m);
+    }
+
+    public OrganizationMembershipDto updateMembership(UUID id, UpdateOrganizationMembershipRequest request) {
+        OrganizationMembership m = organizationMembershipRepository.findById(id).orElseThrow(() -> new ApiException(404, "Membership not found"));
+        if (request.getRole() != null) {
+            m.setRole(OrganizationMembership.Role.valueOf(request.getRole()));
+        }
+        organizationMembershipRepository.save(m);
         return toDto(m);
     }
 

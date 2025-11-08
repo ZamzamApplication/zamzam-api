@@ -39,6 +39,16 @@ public class OrganizationController {
         }
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateOrganization(@PathVariable UUID id, @RequestBody UpdateOrganizationRequest request) {
+        try {
+            OrganizationDto org = organizationService.updateOrganization(id, request);
+            return ResponseEntity.ok(org);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
+
     @DeleteMapping("/{id}")
     public void deleteOrganization(@PathVariable UUID id) {
         organizationService.deleteOrganization(id);

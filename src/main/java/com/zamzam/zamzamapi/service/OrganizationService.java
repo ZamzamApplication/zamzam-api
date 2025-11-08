@@ -61,6 +61,15 @@ public class OrganizationService {
         return toDto(org);
     }
 
+    public OrganizationDto updateOrganization(UUID id, UpdateOrganizationRequest request) {
+        Organization org = organizationRepository.findById(id).orElseThrow(() -> new ApiException(404, "Organization not found"));
+        if (request.getName() != null) {
+            org.setName(request.getName());
+        }
+        organizationRepository.save(org);
+        return toDto(org);
+    }
+
     public void deleteOrganization(UUID id) {
         organizationRepository.deleteById(id);
     }

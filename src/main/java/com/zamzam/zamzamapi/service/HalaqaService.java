@@ -120,6 +120,15 @@ public class HalaqaService {
         return halaqaRepository.findByOrganizationId(organizationId).stream().map(this::toDto).collect(Collectors.toList());
     }
 
+    public HalaqaDto updateHalaqa(UUID id, UpdateHalaqaRequest request) {
+        Halaqa halaqa = halaqaRepository.findById(id).orElseThrow(() -> new ApiException(404, "Halaqa not found"));
+        if (request.getName() != null) {
+            halaqa.setName(request.getName());
+        }
+        halaqaRepository.save(halaqa);
+        return toDto(halaqa);
+    }
+
     public void deleteHalaqa(UUID id) {
         halaqaRepository.deleteById(id);
     }

@@ -27,6 +27,11 @@ public class DailyProgressController {
         return dailyProgressService.createProgress(request);
     }
 
+    @PutMapping("/{id}")
+    public DailyProgressDto updateProgress(@PathVariable UUID id, @RequestBody UpdateDailyProgressRequest request) {
+        return dailyProgressService.updateProgress(id, request);
+    }
+
     @DeleteMapping("/{id}")
     public void deleteProgress(@PathVariable UUID id) {
         dailyProgressService.deleteProgress(id);

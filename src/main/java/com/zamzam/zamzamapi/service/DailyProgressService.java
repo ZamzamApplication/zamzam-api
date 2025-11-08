@@ -59,6 +59,24 @@ public class DailyProgressService {
         return toDto(dp);
     }
 
+    public DailyProgressDto updateProgress(UUID id, UpdateDailyProgressRequest request) {
+        DailyProgress dp = dailyProgressRepository.findById(id).orElseThrow(() -> new RuntimeException("Progress not found"));
+        if (request.getHifz() != null) {
+            dp.setHifz(request.getHifz());
+        }
+        if (request.getRevision() != null) {
+            dp.setRevision(request.getRevision());
+        }
+        if (request.getRemarks() != null) {
+            dp.setRemarks(request.getRemarks());
+        }
+        if (request.getRating() != null) {
+            dp.setRating(request.getRating());
+        }
+        dailyProgressRepository.save(dp);
+        return toDto(dp);
+    }
+
     public void deleteProgress(UUID id) {
         dailyProgressRepository.deleteById(id);
     }

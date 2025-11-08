@@ -1,6 +1,7 @@
 package com.zamzam.zamzamapi.controller;
 
 import com.zamzam.zamzamapi.dto.CreateUserRequest;
+import com.zamzam.zamzamapi.dto.UpdateUserRequest;
 import com.zamzam.zamzamapi.dto.UserDto;
 import com.zamzam.zamzamapi.dto.OrganizationDto;
 import com.zamzam.zamzamapi.service.UserService;
@@ -37,6 +38,16 @@ public class UserController {
     public ResponseEntity<?> createUser(@RequestBody CreateUserRequest request) {
         try {
             UserDto user = userService.createUser(request);
+            return ResponseEntity.ok(user);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateUser(@PathVariable UUID id, @RequestBody UpdateUserRequest request) {
+        try {
+            UserDto user = userService.updateUser(id, request);
             return ResponseEntity.ok(user);
         } catch (ApiException e) {
             return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());

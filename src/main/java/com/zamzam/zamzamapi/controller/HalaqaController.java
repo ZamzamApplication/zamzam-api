@@ -54,6 +54,16 @@ public class HalaqaController {
         }
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateHalaqa(@PathVariable UUID id, @RequestBody UpdateHalaqaRequest request) {
+        try {
+        HalaqaDto halaqa = halaqaService.updateHalaqa(id, request);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(halaqa);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
+
     @DeleteMapping("/{id}")
     public void deleteHalaqa(@PathVariable UUID id) {
         halaqaService.deleteHalaqa(id);

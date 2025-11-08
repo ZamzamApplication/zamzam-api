@@ -34,6 +34,16 @@ public class OrganizationMembershipController {
         }
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateMembership(@PathVariable UUID id, @RequestBody UpdateOrganizationMembershipRequest request) {
+        try {
+            OrganizationMembershipDto membership = organizationMembershipService.updateMembership(id, request);
+            return ResponseEntity.ok(membership);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
+
     @DeleteMapping("/{id}")
     public void deleteMembership(@PathVariable UUID id) {
         organizationMembershipService.deleteMembership(id);
