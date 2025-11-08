@@ -1,10 +1,10 @@
 {
 	"info": {
-		"_postman_id": "f89bc657-2d79-4306-9449-44fbe72c0448",
+		"_postman_id": "9311f766-27de-4a45-abbe-6b1adcc5e106",
 		"name": "Zamzam API",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "49673448",
-		"_collection_link": "https://zamzam0.postman.co/workspace/Team-Workspace~57c6187b-d807-482c-8fcc-a60627e0f903/collection/49673448-f89bc657-2d79-4306-9449-44fbe72c0448?action=share&source=collection_link&creator=49673448"
+		"_collection_link": "https://zamzam0.postman.co/workspace/Team-Workspace~57c6187b-d807-482c-8fcc-a60627e0f903/collection/49673448-9311f766-27de-4a45-abbe-6b1adcc5e106?action=share&source=collection_link&creator=49673448"
 	},
 	"item": [
 		{
@@ -120,7 +120,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Updated Name\",\n  \"email\": \"updated@example.com\"\n}",
+							"raw": "{\n  \"name\": \"Updated Name\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -877,6 +877,75 @@
 					"response": []
 				}
 			]
+		},
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "login",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"cmx@efxample.com\",\n    \"password\": \"password123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "noauth"
+			},
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				}
+			]
 		}
 	],
 	"auth": {
@@ -941,6 +1010,11 @@
 		{
 			"key": "progressId",
 			"value": "00000000-0000-0000-0000-000000000000"
+		},
+		{
+			"key": "jwt_token",
+			"value": "",
+			"type": "default"
 		}
 	]
 }
