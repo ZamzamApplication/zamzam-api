@@ -6,5 +6,6 @@ public class HalaqaMemberDto {
     public UUID id;
     public String name;
     public String role;
+
 }
 

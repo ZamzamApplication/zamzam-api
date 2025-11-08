@@ -4,6 +4,7 @@ import com.zamzam.zamzamapi.dto.*;
 import com.zamzam.zamzamapi.service.HalaqaService;
 import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
@@ -37,8 +38,8 @@ public class HalaqaController {
     @PostMapping("/{halaqaId}/member")
     public ResponseEntity<?> addHalaqaMember(@PathVariable UUID halaqaId, @RequestBody AddHalaqaMemberRequest request) {
         try {
-            HalaqaMemberDto member = halaqaService.addHalaqaMember(halaqaId, request);
-            return ResponseEntity.ok(member);
+        HalaqaMemberDto member = halaqaService.addHalaqaMember(halaqaId, request);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(member);
         } catch (ApiException e) {
             return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
         }
@@ -46,8 +47,8 @@ public class HalaqaController {
     @PostMapping
     public ResponseEntity<?> createHalaqa(@RequestBody CreateHalaqaRequest request) {
         try {
-            HalaqaDto halaqa = halaqaService.createHalaqa(request);
-            return ResponseEntity.ok(halaqa);
+        HalaqaDto halaqa = halaqaService.createHalaqa(request);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(halaqa);
         } catch (ApiException e) {
             return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
         }
