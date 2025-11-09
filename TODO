@@ -1,0 +1,5 @@
+- add CI for testing the backend
+- add CD for the backend and database
+- write tests for the backend (service layer for now)
+- move JWT secret from hardcoded value to application.properties
+
