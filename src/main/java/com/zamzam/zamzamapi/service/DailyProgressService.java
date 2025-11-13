@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.stream.Collectors;
 
+
 @Service
 public class DailyProgressService {
     @Autowired
@@ -44,12 +45,14 @@ public class DailyProgressService {
 
     public DailyProgressDto createProgress(CreateDailyProgressRequest request) {
         DailyProgress dp = new DailyProgress();
-        if (request.studentId != null) {
-            userRepository.findById(request.studentId).ifPresent(dp::setStudent);
+        if (request.studentId == null) {
+            throw new RuntimeException("Student ID is required");
         }
-        if (request.halaqaId != null) {
-            halaqaRepository.findById(request.halaqaId).ifPresent(dp::setHalaqa);
+        if (request.halaqaId == null) {
+            throw new RuntimeException("Halaqa ID is required");
         }
+        userRepository.findById(request.studentId).ifPresent(dp::setStudent);
+        halaqaRepository.findById(request.halaqaId).ifPresent(dp::setHalaqa);
         dp.setDate(request.date);
         dp.setHifz(request.hifz);
         dp.setRevision(request.revision);
@@ -79,5 +82,26 @@ public class DailyProgressService {
 
     public void deleteProgress(UUID id) {
         dailyProgressRepository.deleteById(id);
+    }
+
+    public List<DailyProgressDto> getProgressByHalaqaId(UUID halaqaId, Integer limit) {
+        List<DailyProgress> progresses = dailyProgressRepository.findByHalaqaId(halaqaId);
+        if (limit == null) {
+            return progresses.stream().map(this::toDto).collect(Collectors.toList());
+        }
+        // Group by student and take the last 'limit' per student
+        Map<UUID, List<DailyProgress>> grouped = progresses.stream()
+                .filter(dp -> dp.getStudent() != null)
+                .collect(Collectors.groupingBy(dp -> dp.getStudent().getId()));
+        List<DailyProgress> limited = new ArrayList<>();
+        for (List<DailyProgress> studentProgress : grouped.values()) {
+            studentProgress.sort((a, b) -> b.getDate().compareTo(a.getDate())); // Descending date
+            limited.addAll(studentProgress.subList(0, Math.min(limit, studentProgress.size())));
+        }
+        return limited.stream().map(this::toDto).collect(Collectors.toList());
+    }
+
+    public List<DailyProgressDto> getProgressByStudentId(UUID studentId) {
+        return dailyProgressRepository.findByStudentId(studentId).stream().map(this::toDto).collect(Collectors.toList());
     }
 }

@@ -17,6 +17,15 @@ public class DailyProgressController {
         return dailyProgressService.getAllProgress();
     }
 
+    @GetMapping("halaqa/{halaqaId}")
+    public List<DailyProgressDto> getProgressByHalaqa(@PathVariable UUID halaqaId, @RequestParam(required = false) Integer limit) {
+        return dailyProgressService.getProgressByHalaqaId(halaqaId, limit);
+    }
+
+    @GetMapping("student/{studentId}")
+    public List<DailyProgressDto> getProgressByStudent(@PathVariable UUID studentId) {
+        return dailyProgressService.getProgressByStudentId(studentId);
+    }
     @GetMapping("/{id}")
     public DailyProgressDto getProgress(@PathVariable UUID id) {
         return dailyProgressService.getProgressById(id);
