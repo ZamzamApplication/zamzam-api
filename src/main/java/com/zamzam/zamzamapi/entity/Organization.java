@@ -15,6 +15,7 @@ public class Organization {
     private UUID id;
 
     private String name;
+
     @ManyToOne
     private User createdBy;
 

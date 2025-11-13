@@ -15,6 +15,7 @@ import java.util.UUID;
 public interface OrganizationRepository extends JpaRepository<Organization, UUID> {
 
     Optional<Organization> findByName(String name);
+
     @Query("SELECT m FROM Organization o JOIN o.members m WHERE o.id = :organizationId")
     List<OrganizationMembership> findMembershipsByOrganizationId(UUID organizationId);
 
