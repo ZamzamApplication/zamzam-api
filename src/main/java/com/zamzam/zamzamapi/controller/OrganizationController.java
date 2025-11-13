@@ -24,7 +24,7 @@ public class OrganizationController {
         return organizationService.getOrganizationById(id);
     }
 
-    @GetMapping("user/{userId}")
+    @GetMapping("/user/{userId}")
     public List<OrganizationDto> getOrganizationsByUserId(@PathVariable UUID userId) {
         return organizationService.getOrganizationsByUserId(userId);
     }
