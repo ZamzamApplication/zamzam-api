@@ -133,5 +133,17 @@ public class HalaqaService {
         halaqaRepository.deleteById(id);
     }
 
+    public void removeHalaqaMember(UUID halaqaId, UUID userId) {
+        Halaqa halaqa = halaqaRepository.findById(halaqaId).orElseThrow(() -> new ApiException(404, "Halaqa not found"));
+        User user = userRepository.findById(userId).orElseThrow(() -> new ApiException(404, "User not found"));
+
+        if (!halaqa.getStudents().contains(user)) {
+            throw new ApiException(400, "User is not a student in this halaqa");
+        }
+
+        halaqa.getStudents().remove(user);
+        halaqaRepository.save(halaqa);
+    }
+
 }
 
