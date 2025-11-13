@@ -23,10 +23,6 @@ public class User {
 
     private LocalDateTime createdAt;
 
-    public enum Role {
-        SYSTEM_ADMIN, ORG_ADMIN, TEACHER, STUDENT, PARENT
-    }
-
     @OneToMany(mappedBy = "user")
     private Set<OrganizationMembership> memberships = new HashSet<>();
 

@@ -29,10 +29,25 @@ public class OrganizationController {
         return organizationService.getOrganizationsByUserId(userId);
     }
 
+    @GetMapping("/{orgId}/users")
+    public List<UserDto> getOrganizationUsers(@PathVariable UUID orgId) {
+        return organizationService.getOrganizationUsers(orgId);
+    }
+
     @PostMapping
     public ResponseEntity<?> createOrganization(@RequestBody CreateOrganizationRequest request) {
         try {
             OrganizationDto org = organizationService.createOrganization(request);
+            return ResponseEntity.ok(org);
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateOrganization(@PathVariable UUID id, @RequestBody UpdateOrganizationRequest request) {
+        try {
+            OrganizationDto org = organizationService.updateOrganization(id, request);
             return ResponseEntity.ok(org);
         } catch (ApiException e) {
             return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());

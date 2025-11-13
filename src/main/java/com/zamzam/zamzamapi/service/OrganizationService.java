@@ -29,6 +29,20 @@ public class OrganizationService {
         return dto;
     }
 
+    public List<UserDto> getOrganizationUsers(UUID orgId) {
+        Organization org = organizationRepository.findById(orgId).orElseThrow(() -> new ApiException(404, "Organization not found"));
+        List<OrganizationMembership> memberships = organizationRepository.findMembershipsByOrganizationId(orgId);
+        return memberships.stream().map(membership -> {
+            User user = membership.getUser();
+            UserDto dto = new UserDto();
+            dto.id = user.getId();
+            dto.name = user.getName();
+            dto.email = user.getEmail();
+            dto.role = user.getIsAdmin() ? "ADMIN" : "USER";
+            dto.createdAt = user.getCreatedAt();
+            return dto;
+        }).collect(Collectors.toList());
+    }
     public List<OrganizationDto> getAllOrganizations() {
         return organizationRepository.findAll().stream().map(this::toDto).collect(Collectors.toList());
     }
@@ -58,6 +72,15 @@ public class OrganizationService {
             userRepository.findById(request.createdById).ifPresent(org::setCreatedBy);
         }
         org = organizationRepository.save(org);
+        return toDto(org);
+    }
+
+    public OrganizationDto updateOrganization(UUID id, UpdateOrganizationRequest request) {
+        Organization org = organizationRepository.findById(id).orElseThrow(() -> new ApiException(404, "Organization not found"));
+        if (request.getName() != null) {
+            org.setName(request.getName());
+        }
+        organizationRepository.save(org);
         return toDto(org);
     }
 

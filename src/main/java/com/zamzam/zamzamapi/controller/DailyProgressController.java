@@ -17,6 +17,15 @@ public class DailyProgressController {
         return dailyProgressService.getAllProgress();
     }
 
+    @GetMapping("halaqa/{halaqaId}")
+    public List<DailyProgressDto> getProgressByHalaqa(@PathVariable UUID halaqaId, @RequestParam(required = false) Integer limit) {
+        return dailyProgressService.getProgressByHalaqaId(halaqaId, limit);
+    }
+
+    @GetMapping("student/{studentId}")
+    public List<DailyProgressDto> getProgressByStudent(@PathVariable UUID studentId) {
+        return dailyProgressService.getProgressByStudentId(studentId);
+    }
     @GetMapping("/{id}")
     public DailyProgressDto getProgress(@PathVariable UUID id) {
         return dailyProgressService.getProgressById(id);
@@ -25,6 +34,11 @@ public class DailyProgressController {
     @PostMapping
     public DailyProgressDto createProgress(@RequestBody CreateDailyProgressRequest request) {
         return dailyProgressService.createProgress(request);
+    }
+
+    @PutMapping("/{id}")
+    public DailyProgressDto updateProgress(@PathVariable UUID id, @RequestBody UpdateDailyProgressRequest request) {
+        return dailyProgressService.updateProgress(id, request);
     }
 
     @DeleteMapping("/{id}")

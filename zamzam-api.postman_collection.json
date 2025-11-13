@@ -1,12 +1,81 @@
 {
 	"info": {
-		"_postman_id": "f89bc657-2d79-4306-9449-44fbe72c0448",
+		"_postman_id": "9311f766-27de-4a45-abbe-6b1adcc5e106",
 		"name": "Zamzam API",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "49673448",
-		"_collection_link": "https://zamzam0.postman.co/workspace/Team-Workspace~57c6187b-d807-482c-8fcc-a60627e0f903/collection/49673448-f89bc657-2d79-4306-9449-44fbe72c0448?action=share&source=collection_link&creator=49673448"
+		"_collection_link": "https://zamzam0.postman.co/workspace/Team-Workspace~57c6187b-d807-482c-8fcc-a60627e0f903/collection/49673448-9311f766-27de-4a45-abbe-6b1adcc5e106?action=share&source=collection_link&creator=49673448"
 	},
 	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "login",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"cmx@efxample.com\",\n    \"password\": \"password123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "noauth"
+			},
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		},
 		{
 			"name": "Users",
 			"item": [
@@ -20,7 +89,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -53,7 +122,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -103,13 +172,52 @@
 					"response": []
 				},
 				{
+					"name": "Update User",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Name\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/users/{{userId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"users",
+								"{{userId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
 					"name": "Delete User",
 					"request": {
 						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -139,7 +247,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -163,7 +271,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -189,7 +297,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -214,7 +322,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							},
 							{
@@ -241,13 +349,52 @@
 					"response": []
 				},
 				{
+					"name": "Update Organization",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Organization Name\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/organizations/{{orgId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"organizations",
+								"{{orgId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
 					"name": "Delete Organization",
 					"request": {
 						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -260,6 +407,44 @@
 								"api",
 								"organizations",
 								"{{orgId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Organization Users",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/organizations/{{orgId}}/users",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"organizations",
+								"{{orgId}}",
+								"users"
 							]
 						}
 					},
@@ -277,7 +462,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -301,7 +486,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -326,7 +511,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							},
 							{
@@ -353,13 +538,52 @@
 					"response": []
 				},
 				{
+					"name": "Update Membership",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/memberships/{{membershipId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"memberships",
+								"{{membershipId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
 					"name": "Delete Membership",
 					"request": {
 						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -392,7 +616,7 @@
 								"header": [
 									{
 										"key": "Authorization",
-										"value": "Basic {{auth}}",
+										"value": "Bearer {{jwt_token}}",
 										"type": "text"
 									}
 								],
@@ -449,7 +673,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -473,7 +697,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -498,7 +722,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							},
 							{
@@ -525,13 +749,52 @@
 					"response": []
 				},
 				{
+					"name": "Update Halaqa",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Halaqa Name\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/halaqat/{{halaqaId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"halaqat",
+								"{{halaqaId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
 					"name": "Delete Halaqa",
 					"request": {
 						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -581,7 +844,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -605,7 +868,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -630,7 +893,7 @@
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							},
 							{
@@ -657,13 +920,52 @@
 					"response": []
 				},
 				{
+					"name": "Update Progress",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"hifz\": \"Updated Hifz\",\n  \"revision\": \"Updated Revision\",\n  \"remarks\": \"Updated Remarks\",\n  \"rating\": 4\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/progress/{{progressId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"progress",
+								"{{progressId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
 					"name": "Delete Progress",
 					"request": {
 						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Basic {{auth}}",
+								"value": "Bearer {{jwt_token}}",
 								"type": "text"
 							}
 						],
@@ -685,16 +987,11 @@
 		}
 	],
 	"auth": {
-		"type": "basic",
-		"basic": [
+		"type": "bearer",
+		"bearer": [
 			{
-				"key": "username",
-				"value": "m@example.com",
-				"type": "string"
-			},
-			{
-				"key": "password",
-				"value": "password123",
+				"key": "token",
+				"value": "{{jwt_token}}",
 				"type": "string"
 			}
 		]
@@ -751,6 +1048,11 @@
 		{
 			"key": "progressId",
 			"value": "00000000-0000-0000-0000-000000000000"
+		},
+		{
+			"key": "jwt_token",
+			"value": "",
+			"type": "default"
 		}
 	]
 }
