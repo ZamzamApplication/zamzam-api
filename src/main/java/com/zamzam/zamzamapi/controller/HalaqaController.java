@@ -68,5 +68,15 @@ public class HalaqaController {
     public void deleteHalaqa(@PathVariable UUID id) {
         halaqaService.deleteHalaqa(id);
     }
+
+    @DeleteMapping("/{halaqaId}/members/{userId}")
+    public ResponseEntity<String> removeHalaqaMember(@PathVariable UUID halaqaId, @PathVariable UUID userId) {
+        try {
+            halaqaService.removeHalaqaMember(halaqaId, userId);
+            return ResponseEntity.ok("Student removed from halaqa successfully");
+        } catch (ApiException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(e.getMessage());
+        }
+    }
 }
 
