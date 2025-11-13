@@ -156,7 +156,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Mooaz\",\n  \"email\":\"cmx@efxample.com\",\n  \"password\": \"password123\"\n}"
+							"raw": "{\n  \"name\": \"Mooaz\",\n  \"email\":\"cmx@efxampdddle.com\",\n  \"password\": \"password123\"\n}"
 						},
 						"url": {
 							"raw": "{{baseUrl}}/api/users",
@@ -978,6 +978,64 @@
 								"api",
 								"progress",
 								"{{progressId}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Progress Halaqa Progress",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/progress/halaqa/{{halaqaId}}?limit=2",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"progress",
+								"halaqa",
+								"{{halaqaId}}"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "2"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Progress for a Specific Student",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/api/progress/student/{{userId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"progress",
+								"student",
+								"{{userId}}"
 							]
 						}
 					},
