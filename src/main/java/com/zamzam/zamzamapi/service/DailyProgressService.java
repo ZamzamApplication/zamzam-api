@@ -22,7 +22,7 @@ public class DailyProgressService {
     @Autowired
     private HalaqaRepository halaqaRepository;
 
-    private DailyProgressDto toDto(DailyProgress dp) {
+    public DailyProgressDto toDto(DailyProgress dp) {
         DailyProgressDto dto = new DailyProgressDto();
         dto.id = dp.getId();
         dto.studentId = dp.getStudent() != null ? dp.getStudent().getId() : null;

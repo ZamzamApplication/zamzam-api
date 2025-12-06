@@ -11,6 +11,8 @@ public class UserDto {
     public Boolean isAdmin;
     public String role;
     public LocalDateTime createdAt;
+    public String passwordHash;
+    public LocalDateTime lastLoginAt;
     public Set<UUID> childrenIds;
     public Set<UUID> parentIds;
     public Set<UUID> halaqatIds;
