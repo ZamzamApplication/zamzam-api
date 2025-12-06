@@ -22,4 +22,7 @@ public interface HalaqaRepository extends JpaRepository<Halaqa, UUID> {
     Optional<Halaqa> findByIdWithMembers(@Param("id") UUID id);
 
     List<Halaqa> findByUpdatedAtAfter(LocalDateTime since);
+
+    @Query("SELECT h FROM Halaqa h WHERE h.updatedAt > :since AND h.organization IN :orgs")
+    List<Halaqa> findByUpdatedAtAfterAndOrganizationIn(LocalDateTime since, List<Organization> orgs);
 }

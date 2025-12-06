@@ -1,5 +1,6 @@
 package com.zamzam.zamzamapi.repository;
 
+import com.zamzam.zamzamapi.entity.Organization;
 import com.zamzam.zamzamapi.entity.OrganizationMembership;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -16,5 +17,8 @@ public interface OrganizationMembershipRepository extends JpaRepository<Organiza
 
     List<OrganizationMembership> findByUserId(UUID userId);
     List<OrganizationMembership> findByUpdatedAtAfter(LocalDateTime since);
+
+    @Query("SELECT m FROM OrganizationMembership m WHERE m.updatedAt > :since AND m.organization IN :orgs")
+    List<OrganizationMembership> findByUpdatedAtAfterAndOrganizationIn(LocalDateTime since, List<Organization> orgs);
 }
 

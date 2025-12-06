@@ -47,14 +47,17 @@ public class SyncService {
     @Autowired
     private DailyProgressService progressService;
 
+    @Transactional(readOnly = true)
     public Map<String, Object> getSyncData(LocalDateTime since, UUID userId) {
         Map<String, Object> data = new HashMap<>();
 
+        List<Organization> userOrgs = organizationRepository.getByUserId(userId);
+
         data.put("users", userRepository.findByUpdatedAtAfter(since).stream().map(userService::toDto).toList());
         data.put("organizations", organizationRepository.findByUpdatedAtAfterAndUserId(since, userId).stream().map(organizationService::toDto).toList());
-        data.put("memberships", membershipRepository.findByUpdatedAtAfter(since).stream().map(membershipService::toDto).toList());
-        data.put("halaqat", halaqaRepository.findByUpdatedAtAfter(since).stream().map(halaqaService::toDto).toList());
-        data.put("progress", progressRepository.findByUpdatedAtAfter(since).stream().map(progressService::toDto).toList());
+        data.put("memberships", membershipRepository.findByUpdatedAtAfterAndOrganizationIn(since, userOrgs).stream().map(membershipService::toDto).toList());
+        data.put("halaqat", halaqaRepository.findByUpdatedAtAfterAndOrganizationIn(since, userOrgs).stream().map(halaqaService::toDto).toList());
+        data.put("progress", progressRepository.findByUpdatedAtAfterAndHalaqaOrganizationIn(since, userOrgs).stream().map(progressService::toDto).toList());
 
         return data;
     }
