@@ -2,4 +2,4 @@
 - add CD for the backend and database
 - write tests for the backend (service layer for now)
 - move JWT secret from hardcoded value to application.properties
-
+- fix the sync post function in the service and test it using postman 
