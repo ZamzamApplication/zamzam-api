@@ -14,7 +14,11 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import com.zamzam.zamzamapi.exception.ApiException;
+import com.zamzam.zamzamapi.dto.PaginatedResponse;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.time.LocalDateTime;
@@ -46,8 +50,10 @@ public class UserService implements UserDetailsService {
         return dto;
     }
 
-    public List<UserDto> getAllUsers() {
-        return userRepository.findAll().stream().map(this::toDto).collect(Collectors.toList());
+    public PaginatedResponse<UserDto> getAllUsers(Pageable pageable) {
+        Page<User> userPage = userRepository.findAll(pageable);
+        List<UserDto> userDtos = userPage.getContent().stream().map(this::toDto).collect(Collectors.toList());
+        return new PaginatedResponse<>(userDtos, userPage.getNumber(), userPage.getSize(), userPage.getTotalElements());
     }
 
     public UserDto getUserById(UUID id) {
@@ -66,6 +72,7 @@ public class UserService implements UserDetailsService {
                 .build();
     }
 
+    @Transactional
     public UserDto createUser(CreateUserRequest request) {
         if (userRepository.findByEmail(request.email) != null) {
             throw new ApiException(409, "Email already exists");
@@ -81,6 +88,7 @@ public class UserService implements UserDetailsService {
         return toDto(user);
     }
 
+    @Transactional
     public UserDto updateUser(UUID id, UpdateUserRequest request) {
         User user = userRepository.findById(id).orElseThrow(() -> new ApiException(404, "User not found"));
         if (request.getName() != null) {
@@ -96,6 +104,7 @@ public class UserService implements UserDetailsService {
         return toDto(user);
     }
 
+    @Transactional
     public void deleteUser(UUID id) {
         userRepository.deleteById(id);
     }

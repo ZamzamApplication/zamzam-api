@@ -4,12 +4,17 @@ import com.zamzam.zamzamapi.dto.CreateUserRequest;
 import com.zamzam.zamzamapi.dto.UpdateUserRequest;
 import com.zamzam.zamzamapi.dto.UserDto;
 import com.zamzam.zamzamapi.dto.OrganizationDto;
+import com.zamzam.zamzamapi.dto.PaginatedResponse;
 import com.zamzam.zamzamapi.service.UserService;
 import com.zamzam.zamzamapi.exception.ApiException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,8 +25,8 @@ public class UserController {
     private UserService userService;
 
     @GetMapping
-    public List<UserDto> getAllUsers() {
-        return userService.getAllUsers();
+    public PaginatedResponse<UserDto> getAllUsers(Pageable pageable) {
+        return userService.getAllUsers(pageable);
     }
 
     @GetMapping("/{id}")
@@ -35,7 +40,7 @@ public class UserController {
     }
 
     @PostMapping
-    public ResponseEntity<?> createUser(@RequestBody CreateUserRequest request) {
+    public ResponseEntity<?> createUser(@Valid @RequestBody CreateUserRequest request) {
         try {
             UserDto user = userService.createUser(request);
             return ResponseEntity.ok(user);
@@ -45,7 +50,7 @@ public class UserController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateUser(@PathVariable UUID id, @RequestBody UpdateUserRequest request) {
+    public ResponseEntity<?> updateUser(@PathVariable UUID id, @Valid @RequestBody UpdateUserRequest request) {
         try {
             UserDto user = userService.updateUser(id, request);
             return ResponseEntity.ok(user);

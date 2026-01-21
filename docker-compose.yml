@@ -22,9 +22,11 @@ services:
     depends_on:
       - postgres
     environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/zamzam_db
-      - SPRING_DATASOURCE_USERNAME=zamzam_user
-      - SPRING_DATASOURCE_PASSWORD=zamzam_password
+      - DATABASE_URL=jdbc:postgresql://postgres:5432/zamzam_db
+      - DATABASE_USERNAME=zamzam_user
+      - DATABASE_PASSWORD=zamzam_password
+      - JWT_SECRET=your-secret-key-here-should-be-at-least-256-bits-for-production-use-change-this-in-production
+      - JWT_EXPIRATION=36000000
     restart: unless-stopped
 
 volumes:
