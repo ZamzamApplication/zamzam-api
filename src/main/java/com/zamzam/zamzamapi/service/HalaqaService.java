@@ -23,7 +23,7 @@ public class HalaqaService {
     @Autowired
     private UserRepository userRepository;
 
-    private HalaqaDto toDto(Halaqa h) {
+    public HalaqaDto toDto(Halaqa h) {
         HalaqaDto dto = new HalaqaDto();
         dto.id = h.getId();
         dto.name = h.getName();

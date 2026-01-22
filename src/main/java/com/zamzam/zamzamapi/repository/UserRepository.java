@@ -4,11 +4,13 @@ import com.zamzam.zamzamapi.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.UUID;
 
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByEmail(String email);
     User findByEmail(String email);
-    Page<User> findAll(Pageable pageable);
+    List<User> findByUpdatedAtAfter(LocalDateTime since);
 }
 

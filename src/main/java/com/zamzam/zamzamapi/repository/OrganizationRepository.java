@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -15,10 +16,16 @@ import java.util.UUID;
 public interface OrganizationRepository extends JpaRepository<Organization, UUID> {
 
     Optional<Organization> findByName(String name);
+
     @Query("SELECT m FROM Organization o JOIN o.members m WHERE o.id = :organizationId")
     List<OrganizationMembership> findMembershipsByOrganizationId(UUID organizationId);
 
     @Query("SELECT DISTINCT o FROM Organization o LEFT JOIN o.members m WHERE m.user.id = :userId OR o.createdBy.id = :userId")
     List<Organization> getByUserId(@Param("userId") UUID userId);
+
+    List<Organization> findByUpdatedAtAfter(LocalDateTime since);
+
+    @Query("SELECT DISTINCT o FROM Organization o LEFT JOIN o.members m WHERE o.updatedAt > :since AND (m.user.id = :userId OR o.createdBy.id = :userId)")
+    List<Organization> findByUpdatedAtAfterAndUserId(@Param("since") LocalDateTime since, @Param("userId") UUID userId);
 }
 

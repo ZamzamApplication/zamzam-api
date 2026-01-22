@@ -5,11 +5,11 @@ import java.util.Set;
 import java.util.UUID;
 
 public class HalaqaDto {
-    public UUID id;
-    public String name;
-    public UUID organizationId;
-    public UUID teacherId;
-    public LocalDateTime createdAt;
-    public Set<UUID> studentIds;
+  public UUID id;
+  public String name;
+  public UUID organizationId;
+  public UUID teacherId;
+  public LocalDateTime createdAt;
+  public Set<UUID> studentIds;
+  public long version;
 }
-
