@@ -23,13 +23,14 @@ public class OrganizationMembershipService {
     @Autowired
     private OrganizationRepository organizationRepository;
 
-    private OrganizationMembershipDto toDto(OrganizationMembership m) {
+    public OrganizationMembershipDto toDto(OrganizationMembership m) {
         OrganizationMembershipDto dto = new OrganizationMembershipDto();
         dto.id = m.getId();
         dto.userId = m.getUser() != null ? m.getUser().getId() : null;
         dto.organizationId = m.getOrganization() != null ? m.getOrganization().getId() : null;
         dto.role = m.getRole() != null ? m.getRole().name() : null;
-        dto.joinedAt = m.getJoinedAt();
+        dto.createdAt = m
+                .getCreatedAt();
         return dto;
     }
 
@@ -52,7 +53,7 @@ public class OrganizationMembershipService {
         organizationRepository.findById(request.organizationId).ifPresent(m::setOrganization);
         userRepository.findById(request.userId).ifPresent(m::setUser);
         m.setRole(request.role != null ? OrganizationMembership.Role.valueOf(request.role) : null);
-        m.setJoinedAt(LocalDateTime.now());
+        m                .setCreatedAt(LocalDateTime.now());
         m = organizationMembershipRepository.save(m);
         return toDto(m);
     }

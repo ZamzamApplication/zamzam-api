@@ -33,7 +33,7 @@ public class UserService implements UserDetailsService {
     @Autowired
     private OrganizationService organizationService;
 
-    private UserDto toDto(User user) {
+    public UserDto toDto(User user) {
         UserDto dto = new UserDto();
         dto.id = user.getId();
         dto.name = user.getName();

@@ -8,6 +8,6 @@ public class OrganizationMembershipDto {
     public UUID userId;
     public UUID organizationId;
     public String role;
-    public LocalDateTime joinedAt;
+    public LocalDateTime createdAt;
 }
 
