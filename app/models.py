@@ -1,0 +1,114 @@
+import enum
+from datetime import date, datetime, time
+
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class AttendanceStatus(str, enum.Enum):
+    present = "حاضر"
+    absent = "غياب"
+    excused = "غياب بعذر"
+
+
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    sheikh = "sheikh"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+
+
+class Circle(Base):
+    __tablename__ = "circles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle")
+    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="circle", cascade="all, delete-orphan")
+    schedules: Mapped[list["CircleSchedule"]] = relationship("CircleSchedule", back_populates="circle", cascade="all, delete-orphan")
+
+
+class Sheikh(Base):
+    __tablename__ = "sheikhs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
+
+    circle: Mapped[Circle] = relationship("Circle", back_populates="sheikhs")
+    students: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="sheikh", cascade="all, delete-orphan")
+    user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
+
+
+class Student(Base):
+    __tablename__ = "students"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
+    attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
+
+
+class StudentSheikh(Base):
+    __tablename__ = "student_sheikhs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    sheikh_id: Mapped[int] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    student: Mapped[Student] = relationship("Student", back_populates="sheikhs")
+    sheikh: Mapped[Sheikh] = relationship("Sheikh", back_populates="students")
+
+
+class CircleSchedule(Base):
+    __tablename__ = "circle_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    circle: Mapped[Circle] = relationship("Circle", back_populates="schedules")
+
+
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    circle: Mapped[Circle] = relationship("Circle", back_populates="sessions")
+    attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session", cascade="all, delete-orphan")
+
+
+class Attendance(Base):
+    __tablename__ = "attendance"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    status: Mapped[AttendanceStatus] = mapped_column(Enum(AttendanceStatus), default=AttendanceStatus.absent, nullable=False)
+
+    session: Mapped[Session] = relationship("Session", back_populates="attendance_records")
+    student: Mapped[Student] = relationship("Student", back_populates="attendance_records")
