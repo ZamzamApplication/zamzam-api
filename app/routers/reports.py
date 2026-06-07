@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Student
+from app.models import Attendance, AttendanceStatus, Circle, Session, Student, Sheikh, StudentSheikh
 from app.routers.auth import get_current_user_depends
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -26,32 +26,53 @@ async def circle_attendance_rate(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
+    # Get all students belonging to this circle's sheikhs
+    result = await db.execute(
+        select(StudentSheikh.student_id)
+        .join(Sheikh)
+        .where(Sheikh.circle_id == circle_id)
+    )
+    student_ids = [row[0] for row in result.all()]
+
+    if not student_ids:
+        return {
+            "circle_id": circle_id,
+            "total_attendance_records": 0,
+            "present": 0,
+            "absent": 0,
+            "excused": 0,
+            "attendance_rate": 0,
+        }
+
     result = await db.execute(
         select(func.count(Attendance.id))
+        .where(
+            Attendance.student_id.in_(student_ids),
+        )
         .join(Session)
-        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+        .where(Session.is_confirmed == True)
     )
     total = result.scalar() or 0
 
     result = await db.execute(
         select(func.count(Attendance.id))
-        .join(Session)
         .where(
-            Session.circle_id == circle_id,
-            Session.is_confirmed == True,
+            Attendance.student_id.in_(student_ids),
             Attendance.status == AttendanceStatus.present,
         )
+        .join(Session)
+        .where(Session.is_confirmed == True)
     )
     present = result.scalar() or 0
 
     result = await db.execute(
         select(func.count(Attendance.id))
-        .join(Session)
         .where(
-            Session.circle_id == circle_id,
-            Session.is_confirmed == True,
+            Attendance.student_id.in_(student_ids),
             Attendance.status == AttendanceStatus.excused,
         )
+        .join(Session)
+        .where(Session.is_confirmed == True)
     )
     excused = result.scalar() or 0
 
@@ -125,4 +146,80 @@ async def student_streak(
         "total_absent": total_absent,
         "total_sessions": total,
         "attendance_rate": round((present / total * 100), 1) if total > 0 else 0,
+    }
+
+
+@router.get("/attendance-grid")
+async def attendance_grid(
+    sheikh_id: int | None = Query(default=None),
+    circle_id: int | None = Query(default=None),
+    limit: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    # Get confirmed sessions ordered by date
+    query = select(Session).where(Session.is_confirmed == True)
+    if circle_id:
+        query = query.where(Session.circle_id == circle_id)
+    query = query.order_by(Session.date.desc())
+    if limit:
+        query = query.limit(limit)
+    result = await db.execute(query)
+    sessions = list(reversed(result.scalars().all()))
+
+    # Get students
+    if sheikh_id:
+        result = await db.execute(
+            select(StudentSheikh)
+            .options(selectinload(StudentSheikh.student))
+            .where(
+                StudentSheikh.sheikh_id == sheikh_id,
+                StudentSheikh.end_date.is_(None),
+            )
+        )
+        ss_records = result.scalars().all()
+        student_ids = [r.student_id for r in ss_records]
+        student_map = {r.student.id: r.student for r in ss_records}
+    else:
+        result = await db.execute(select(Student).order_by(Student.name))
+        students = result.scalars().all()
+        student_ids = [s.id for s in students]
+        student_map = {s.id: s for s in students}
+
+    if not student_ids or not sessions:
+        return {"sessions": [], "students": []}
+
+    # Get all attendance records for these students in these sessions
+    session_ids = [s.id for s in sessions]
+    result = await db.execute(
+        select(Attendance).where(
+            Attendance.student_id.in_(student_ids),
+            Attendance.session_id.in_(session_ids),
+        )
+    )
+    attendance_records = result.scalars().all()
+
+    # Build lookup: (student_id, session_id) -> status
+    att_lookup: dict[tuple[int, int], str] = {}
+    for att in attendance_records:
+        att_lookup[(att.student_id, att.session_id)] = att.status.value
+
+    # Build student grid data
+    students_data = []
+    for sid in student_ids:
+        student = student_map.get(sid)
+        if not student:
+            continue
+        records: dict[str, str] = {}
+        for sess in sessions:
+            records[str(sess.id)] = att_lookup.get((sid, sess.id), "غياب")
+        students_data.append({
+            "id": sid,
+            "name": student.name,
+            "records": records,
+        })
+
+    return {
+        "sessions": [{"id": s.id, "date": s.date.isoformat(), "circle_id": s.circle_id} for s in sessions],
+        "students": students_data,
     }

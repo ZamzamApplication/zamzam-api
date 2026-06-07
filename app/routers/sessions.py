@@ -6,15 +6,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session
+from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, StudentSheikh
 from app.routers.auth import get_current_user_depends
+from app.schemas import CreateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
+@router.get("/all")
+async def get_all_sessions(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    query = (
+        select(Session)
+        .options(selectinload(Session.circle))
+        .order_by(Session.date.desc())
+    )
+    result = await db.execute(query)
+    sessions = result.scalars().all()
+    return [
+        {
+            "id": s.id,
+            "date": s.date.isoformat(),
+            "is_confirmed": s.is_confirmed,
+            "circle_id": s.circle_id,
+            "circle_name": s.circle.name,
+        }
+        for s in sessions
+    ]
+
+
+@router.get("/past")
+async def get_past_sessions(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    query = (
+        select(Session)
+        .options(selectinload(Session.circle))
+        .where(Session.is_confirmed == True)
+        .order_by(Session.date.desc())
+    )
+    result = await db.execute(query)
+    sessions = result.scalars().all()
+    return [
+        {
+            "id": s.id,
+            "date": s.date.isoformat(),
+            "is_confirmed": s.is_confirmed,
+            "circle_id": s.circle_id,
+            "circle_name": s.circle.name,
+        }
+        for s in sessions
+    ]
+
+
 @router.get("/upcoming")
 async def get_upcoming_sessions(
-    circle_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
@@ -24,17 +73,15 @@ async def get_upcoming_sessions(
         .where(Session.is_confirmed == False)
         .order_by(Session.date)
     )
-    if circle_id:
-        query = query.where(Session.circle_id == circle_id)
     result = await db.execute(query)
     sessions = result.scalars().all()
     return [
         {
             "id": s.id,
-            "circle_id": s.circle_id,
-            "circle_name": s.circle.name,
             "date": s.date.isoformat(),
             "is_confirmed": s.is_confirmed,
+            "circle_id": s.circle_id,
+            "circle_name": s.circle.name,
         }
         for s in sessions
     ]
@@ -42,17 +89,15 @@ async def get_upcoming_sessions(
 
 @router.post("/")
 async def create_session(
-    circle_id: int,
-    session_date: date,
+    body: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    result = await db.execute(select(Circle).where(Circle.id == circle_id))
-    circle = result.scalar_one_or_none()
-    if not circle:
+    result = await db.execute(select(Circle).where(Circle.id == body.circle_id))
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Circle not found")
 
-    session = Session(circle_id=circle_id, date=session_date)
+    session = Session(date=body.session_date, circle_id=body.circle_id)
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -65,24 +110,24 @@ async def get_session_attendance(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    from sqlalchemy import select
-    from app.models import Session, Sheikh, StudentSheikh, Attendance, Student
-    from sqlalchemy.orm import selectinload
-    from sqlalchemy.orm import joinedload
-
     result = await db.execute(
-        select(Session)
-        .options(
-            selectinload(Session.circle).selectinload(Circle.sheikhs).selectinload(Sheikh.students).selectinload(StudentSheikh.student)
-        )
-        .where(Session.id == session_id)
+        select(Session).options(selectinload(Session.circle)).where(Session.id == session_id)
     )
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    result = await db.execute(
+        select(Sheikh)
+        .options(
+            selectinload(Sheikh.students).selectinload(StudentSheikh.student)
+        )
+        .where(Sheikh.circle_id == session.circle_id)
+    )
+    circle_sheikhs = result.scalars().all()
+
     sheikh_groups = []
-    for sheikh in session.circle.sheikhs:
+    for sheikh in circle_sheikhs:
         students_list = []
         for ss in sheikh.students:
             if ss.end_date is None or ss.end_date >= session.date:
@@ -110,6 +155,8 @@ async def get_session_attendance(
         "session_id": session.id,
         "date": session.date.isoformat(),
         "is_confirmed": session.is_confirmed,
+        "circle_id": session.circle_id,
+        "circle_name": session.circle.name,
         "sheikh_groups": sheikh_groups,
     }
 

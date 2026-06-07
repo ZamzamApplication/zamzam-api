@@ -77,6 +77,12 @@ class UpdateAttendanceRequest(BaseModel):
     status: str
 
 
+class UpsertAttendanceRequest(BaseModel):
+    session_id: int
+    student_id: int
+    status: str
+
+
 class CreateSessionRequest(BaseModel):
     circle_id: int
     session_date: date
@@ -85,3 +91,76 @@ class CreateSessionRequest(BaseModel):
 
 class ConfirmSessionRequest(BaseModel):
     confirm: bool = True
+
+
+class CreateSheikhRequest(BaseModel):
+    name: str
+    phone: str | None = None
+    circle_id: int | None = None
+
+
+class CreateStudentRequest(BaseModel):
+    name: str
+    phone: str | None = None
+    sheikh_id: int | None = None
+
+
+class CreateCircleRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class UpdateSheikhRequest(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    circle_id: int | None = None
+
+
+class UpdateStudentRequest(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+
+
+class UpdateCircleRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "sheikh"
+    sheikh_id: int | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    role: str | None = None
+    sheikh_id: int | None = None
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    sheikh_id: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CreateCircleScheduleRequest(BaseModel):
+    circle_id: int
+    day_of_week: int
+    time: str
+
+
+class CircleScheduleOut(BaseModel):
+    id: int
+    circle_id: int
+    day_of_week: int
+    time: str
+
+    class Config:
+        from_attributes = True

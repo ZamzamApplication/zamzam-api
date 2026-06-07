@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Attendance, AttendanceStatus
 from app.routers.auth import get_current_user_depends
+from app.schemas import UpsertAttendanceRequest
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -31,30 +32,28 @@ async def update_attendance(
 
 @router.post("/upsert")
 async def upsert_attendance(
-    session_id: int,
-    student_id: int,
-    status: str,
+    body: UpsertAttendanceRequest,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    if status not in [s.value for s in AttendanceStatus]:
+    if body.status not in [s.value for s in AttendanceStatus]:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {[s.value for s in AttendanceStatus]}")
 
     result = await db.execute(
         select(Attendance).where(
-            Attendance.session_id == session_id,
-            Attendance.student_id == student_id,
+            Attendance.session_id == body.session_id,
+            Attendance.student_id == body.student_id,
         )
     )
     attendance = result.scalar_one_or_none()
 
     if attendance:
-        attendance.status = AttendanceStatus(status)
+        attendance.status = AttendanceStatus(body.status)
     else:
         attendance = Attendance(
-            session_id=session_id,
-            student_id=student_id,
-            status=AttendanceStatus(status),
+            session_id=body.session_id,
+            student_id=body.student_id,
+            status=AttendanceStatus(body.status),
         )
         db.add(attendance)
 

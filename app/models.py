@@ -37,7 +37,6 @@ class Circle(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle")
-    sessions: Mapped[list["Session"]] = relationship("Session", back_populates="circle", cascade="all, delete-orphan")
     schedules: Mapped[list["CircleSchedule"]] = relationship("CircleSchedule", back_populates="circle", cascade="all, delete-orphan")
 
 
@@ -93,12 +92,12 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
+    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    circle: Mapped[Circle] = relationship("Circle", back_populates="sessions")
+    circle: Mapped[Circle] = relationship("Circle")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session", cascade="all, delete-orphan")
 
 

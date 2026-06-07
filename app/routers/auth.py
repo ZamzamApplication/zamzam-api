@@ -15,6 +15,7 @@ from app.schemas import LoginRequest, Token
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+__all__ = ["pwd_context"]
 
 
 def create_access_token(data: dict) -> str:

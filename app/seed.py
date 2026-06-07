@@ -115,7 +115,7 @@ async def seed_data():
             )
             db.add(ss)
 
-        yesterday_session = Session(circle_id=circle.id, date=date(2026, 6, 2), is_confirmed=True)
+        yesterday_session = Session(date=date(2026, 6, 2), circle_id=circle.id, is_confirmed=True)
         db.add(yesterday_session)
         await db.flush()
 
@@ -127,7 +127,7 @@ async def seed_data():
             )
             db.add(att)
 
-        today_session = Session(circle_id=circle.id, date=date(2026, 6, 3))
+        today_session = Session(date=date(2026, 6, 3), circle_id=circle.id)
         db.add(today_session)
         await db.flush()
 
