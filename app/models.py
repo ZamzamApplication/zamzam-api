@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -11,6 +11,15 @@ class AttendanceStatus(str, enum.Enum):
     present = "حاضر"
     absent = "غياب"
     excused = "غياب بعذر"
+
+
+class ParentType(str, enum.Enum):
+    father = "أب"
+    mother = "أم"
+    brother = "أخ"
+    sister = "إخت"
+    grandfather = "جد"
+    grandmother = "جدة"
 
 
 class UserRole(str, enum.Enum):
@@ -59,9 +68,14 @@ class Student(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    student_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
+    profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
+    parent_phones: Mapped[list["ParentPhone"]] = relationship("ParentPhone", back_populates="student", cascade="all, delete-orphan")
 
 
 class StudentSheikh(Base):
@@ -75,6 +89,17 @@ class StudentSheikh(Base):
 
     student: Mapped[Student] = relationship("Student", back_populates="sheikhs")
     sheikh: Mapped[Sheikh] = relationship("Sheikh", back_populates="students")
+
+
+class ParentPhone(Base):
+    __tablename__ = "parent_phones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    parent_type: Mapped[ParentType] = mapped_column(Enum(ParentType), nullable=False)
+
+    student: Mapped[Student] = relationship("Student", back_populates="parent_phones")
 
 
 class CircleSchedule(Base):

@@ -1,20 +1,28 @@
-from datetime import date, time
+import os
+import shutil
+import uuid
+from datetime import date, datetime, time
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
-from app.models import Circle, CircleSchedule, Session, Sheikh, Student, StudentSheikh, User, UserRole
+
+from app.models import Attendance, Circle, CircleSchedule, ParentPhone, ParentType, Session, Sheikh, Student, StudentSheikh, User, UserRole
 from app.routers.auth import get_current_user_depends, pwd_context
 from app.schemas import (
     CreateCircleRequest,
     CreateCircleScheduleRequest,
+    CreateParentPhone,
     CreateSheikhRequest,
     CreateStudentRequest,
     CreateUserRequest,
     UpdateCircleRequest,
+    UpdateParentPhone,
     UpdateSheikhRequest,
     UpdateStudentRequest,
     UpdateUserRequest,
@@ -69,17 +77,29 @@ async def delete_circle(
     if not circle:
         raise HTTPException(status_code=404, detail="Circle not found")
 
-    result = await db.execute(select(Sheikh).where(Sheikh.circle_id == circle_id).limit(1))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Cannot delete circle with associated sheikhs. Delete the sheikhs first.")
+    # Nullify user references to sheikhs in this circle
+    sheikh_ids_result = await db.execute(select(Sheikh.id).where(Sheikh.circle_id == circle_id))
+    sheikh_ids = [row[0] for row in sheikh_ids_result.all()]
+    if sheikh_ids:
+        await db.execute(sa_update(User).where(User.sheikh_id.in_(sheikh_ids)).values(sheikh_id=None))
 
-    result = await db.execute(select(Session).where(Session.circle_id == circle_id).limit(1))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Cannot delete circle with associated sessions. Delete the sessions first.")
+    # Delete sessions (cascades to attendance records)
+    sessions_result = await db.execute(select(Session.id).where(Session.circle_id == circle_id))
+    session_ids = [row[0] for row in sessions_result.all()]
+    if session_ids:
+        await db.execute(sa_delete(Attendance).where(Attendance.session_id.in_(session_ids)))
+        await db.execute(sa_delete(Session).where(Session.circle_id == circle_id))
+
+    # Delete sheikhs (cascades to student_sheikhs)
+    if sheikh_ids:
+        await db.execute(sa_delete(Sheikh).where(Sheikh.circle_id == circle_id))
+
+    # Delete schedules
+    await db.execute(sa_delete(CircleSchedule).where(CircleSchedule.circle_id == circle_id))
 
     await db.delete(circle)
     await db.commit()
-    return {"message": "Circle deleted"}
+    return {"message": "Circle and all related data deleted"}
 
 
 # ─── Sheikhs ────────────────────────────────────────────────────────────────
@@ -172,7 +192,9 @@ async def get_sheikh_students(
 ):
     result = await db.execute(
         select(StudentSheikh)
-        .options(selectinload(StudentSheikh.student))
+        .options(
+            selectinload(StudentSheikh.student).selectinload(Student.parent_phones),
+        )
         .where(
             StudentSheikh.sheikh_id == sheikh_id,
             StudentSheikh.end_date.is_(None),
@@ -180,7 +202,19 @@ async def get_sheikh_students(
     )
     records = result.scalars().all()
     return [
-        {"id": r.student.id, "name": r.student.name, "phone": r.student.phone}
+        {
+            "id": r.student.id,
+            "name": r.student.name,
+            "phone": r.student.phone,
+            "student_id": r.student.student_id,
+            "birthday": r.student.birthday.isoformat() if r.student.birthday else None,
+            "profile_pic": r.student.profile_pic,
+            "is_enrolled": r.student.is_enrolled,
+            "parent_phones": [
+                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
+                for p in r.student.parent_phones
+            ],
+        }
         for r in records
     ]
 
@@ -195,7 +229,8 @@ async def list_students(
     result = await db.execute(
         select(Student)
         .options(
-            selectinload(Student.sheikhs).selectinload(StudentSheikh.sheikh)
+            selectinload(Student.sheikhs).selectinload(StudentSheikh.sheikh),
+            selectinload(Student.parent_phones),
         )
         .order_by(Student.name)
     )
@@ -205,7 +240,15 @@ async def list_students(
             "id": s.id,
             "name": s.name,
             "phone": s.phone,
+            "student_id": s.student_id,
+            "birthday": s.birthday.isoformat() if s.birthday else None,
+            "profile_pic": s.profile_pic,
+            "is_enrolled": s.is_enrolled,
             "sheikh": {"id": s.sheikhs[0].sheikh.id, "name": s.sheikhs[0].sheikh.name} if s.sheikhs else None,
+            "parent_phones": [
+                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
+                for p in s.parent_phones
+            ],
         }
         for s in students
     ]
@@ -217,7 +260,13 @@ async def create_student(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    student = Student(name=body.name, phone=body.phone)
+    student = Student(
+        name=body.name,
+        phone=body.phone,
+        student_id=body.student_id,
+        birthday=body.birthday,
+        is_enrolled=body.is_enrolled,
+    )
     db.add(student)
     await db.flush()
 
@@ -232,9 +281,27 @@ async def create_student(
         )
         db.add(ss)
 
+    for pp in body.parent_phones:
+        if pp.parent_type not in [t.value for t in ParentType]:
+            raise HTTPException(status_code=400, detail=f"Invalid parent type: {pp.parent_type}")
+        parent_phone = ParentPhone(
+            student_id=student.id,
+            phone_number=pp.phone_number,
+            parent_type=ParentType(pp.parent_type),
+        )
+        db.add(parent_phone)
+
     await db.commit()
     await db.refresh(student)
-    return {"id": student.id, "name": student.name, "phone": student.phone}
+    return {
+        "id": student.id,
+        "name": student.name,
+        "phone": student.phone,
+        "student_id": student.student_id,
+        "birthday": student.birthday.isoformat() if student.birthday else None,
+        "profile_pic": student.profile_pic,
+        "is_enrolled": student.is_enrolled,
+    }
 
 
 @router.put("/students/{student_id}")
@@ -244,7 +311,11 @@ async def update_student(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id))
+    result = await db.execute(
+        select(Student)
+        .options(selectinload(Student.parent_phones))
+        .where(Student.id == student_id)
+    )
     student = result.scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -252,9 +323,37 @@ async def update_student(
         student.name = body.name
     if body.phone is not None:
         student.phone = body.phone
+    if body.student_id is not None:
+        student.student_id = body.student_id
+    if body.birthday is not None:
+        student.birthday = body.birthday
+    if body.profile_pic is not None:
+        student.profile_pic = body.profile_pic
+    if body.is_enrolled is not None:
+        student.is_enrolled = body.is_enrolled
+    if body.parent_phones is not None:
+        for existing in student.parent_phones:
+            await db.delete(existing)
+        for pp in body.parent_phones:
+            if pp.parent_type is not None and pp.parent_type not in [t.value for t in ParentType]:
+                raise HTTPException(status_code=400, detail=f"Invalid parent type: {pp.parent_type}")
+            parent_phone = ParentPhone(
+                student_id=student.id,
+                phone_number=pp.phone_number,
+                parent_type=ParentType(pp.parent_type) if pp.parent_type else None,
+            )
+            db.add(parent_phone)
     await db.commit()
     await db.refresh(student)
-    return {"id": student.id, "name": student.name, "phone": student.phone}
+    return {
+        "id": student.id,
+        "name": student.name,
+        "phone": student.phone,
+        "student_id": student.student_id,
+        "birthday": student.birthday.isoformat() if student.birthday else None,
+        "profile_pic": student.profile_pic,
+        "is_enrolled": student.is_enrolled,
+    }
 
 
 @router.delete("/students/{student_id}")
@@ -270,6 +369,32 @@ async def delete_student(
     await db.delete(student)
     await db.commit()
     return {"message": "Student deleted"}
+
+
+@router.post("/students/{student_id}/upload-pic")
+async def upload_student_pic(
+    student_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    ext = os.path.splitext(file.filename or ".jpg")[1]
+    filename = f"{uuid.uuid4().hex}{ext}"
+    upload_dir = settings.UPLOAD_DIR
+    filepath = os.path.join(upload_dir, filename)
+
+    content = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    student.profile_pic = f"/uploads/{filename}"
+    await db.commit()
+    return {"profile_pic": student.profile_pic}
 
 
 # ─── Users ──────────────────────────────────────────────────────────────────
@@ -426,3 +551,51 @@ async def delete_schedule(
     await db.delete(schedule)
     await db.commit()
     return {"message": "Schedule deleted"}
+
+
+# ─── Database ────────────────────────────────────────────────────────────────
+
+@router.post("/reset-db")
+async def reset_database(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    # Delete in FK-safe order
+    await db.execute(sa_delete(Attendance))
+    await db.execute(sa_delete(Session))
+    await db.execute(sa_delete(ParentPhone))
+    await db.execute(sa_delete(StudentSheikh))
+    await db.execute(sa_delete(Student))
+    await db.execute(sa_delete(CircleSchedule))
+    # Nullify sheikh references before deleting sheikhs/circles
+    await db.execute(sa_update(User).values(sheikh_id=None))
+    await db.execute(sa_delete(Sheikh))
+    await db.execute(sa_delete(Circle))
+    # Delete non-admin users
+    await db.execute(sa_delete(User).where(User.role != UserRole.admin))
+
+    # Delete uploaded profile pictures
+    upload_dir = Path(settings.UPLOAD_DIR)
+    if upload_dir.exists():
+        for f in upload_dir.iterdir():
+            if f.is_file():
+                f.unlink()
+
+    await db.commit()
+    return {"message": "Database reset complete"}
+
+
+@router.get("/backup")
+async def backup_database():
+    db_path = str(settings.DATABASE_URL).replace("sqlite+aiosqlite:///", "")
+    backup_dir = Path(settings.BACKUP_DIR)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    backup_path = backup_dir / f"quran_tracker_{today}.db"
+
+    shutil.copy2(db_path, backup_path)
+    return {"message": "Backup created", "file": str(backup_path)}

@@ -2,6 +2,25 @@ from datetime import date, time
 from pydantic import BaseModel
 
 
+class ParentPhoneOut(BaseModel):
+    id: int
+    phone_number: str
+    parent_type: str
+
+    class Config:
+        from_attributes = True
+
+
+class CreateParentPhone(BaseModel):
+    phone_number: str
+    parent_type: str
+
+
+class UpdateParentPhone(BaseModel):
+    phone_number: str | None = None
+    parent_type: str | None = None
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -34,6 +53,11 @@ class StudentOut(BaseModel):
     id: int
     name: str
     phone: str | None = None
+    student_id: str | None = None
+    birthday: date | None = None
+    profile_pic: str | None = None
+    is_enrolled: bool = True
+    parent_phones: list[ParentPhoneOut] = []
 
     class Config:
         from_attributes = True
@@ -102,7 +126,11 @@ class CreateSheikhRequest(BaseModel):
 class CreateStudentRequest(BaseModel):
     name: str
     phone: str | None = None
+    student_id: str | None = None
+    birthday: date | None = None
+    is_enrolled: bool = True
     sheikh_id: int | None = None
+    parent_phones: list[CreateParentPhone] = []
 
 
 class CreateCircleRequest(BaseModel):
@@ -119,6 +147,11 @@ class UpdateSheikhRequest(BaseModel):
 class UpdateStudentRequest(BaseModel):
     name: str | None = None
     phone: str | None = None
+    student_id: str | None = None
+    birthday: date | None = None
+    profile_pic: str | None = None
+    is_enrolled: bool | None = None
+    parent_phones: list[UpdateParentPhone] | None = None
 
 
 class UpdateCircleRequest(BaseModel):

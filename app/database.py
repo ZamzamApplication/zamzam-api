@@ -22,6 +22,7 @@ async def get_db():
 
 async def migrate():
     async with engine.begin() as conn:
+        # — Session migration (already exists) —
         result = await conn.execute(text("PRAGMA table_info(sessions)"))
         columns = {row[1] for row in result.fetchall()}
         if "circle_id" not in columns:
@@ -42,6 +43,32 @@ async def migrate():
             await conn.execute(text("DROP TABLE sessions"))
             await conn.execute(text("ALTER TABLE sessions_new RENAME TO sessions"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
+
+        # — Add new columns to students table —
+        result = await conn.execute(text("PRAGMA table_info(students)"))
+        student_columns = {row[1] for row in result.fetchall()}
+        if "birthday" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN birthday DATE"))
+        if "profile_pic" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN profile_pic TEXT"))
+        if "is_enrolled" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN is_enrolled BOOLEAN NOT NULL DEFAULT 1"))
+        if "student_id" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN student_id VARCHAR(50)"))
+
+        # — Create parent_phones table —
+        result = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='parent_phones'"
+        ))
+        if not result.scalar_one_or_none():
+            await conn.execute(text("""
+                CREATE TABLE parent_phones (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL REFERENCES students(id),
+                    phone_number VARCHAR(20) NOT NULL,
+                    parent_type VARCHAR(10) NOT NULL
+                )
+            """))
 
 
 async def init_db():

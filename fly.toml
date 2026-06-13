@@ -6,6 +6,8 @@ primary_region = "ams"
 
 [env]
   DATABASE_URL = "sqlite+aiosqlite:////data/quran_tracker.db"
+  UPLOAD_DIR = "/data/uploads"
+  BACKUP_DIR = "/data/backups"
 
 [http_service]
   internal_port = 8080
