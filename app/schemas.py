@@ -57,6 +57,7 @@ class StudentOut(BaseModel):
     birthday: date | None = None
     profile_pic: str | None = None
     is_enrolled: bool = True
+    warnings: int = 0
     parent_phones: list[ParentPhoneOut] = []
 
     class Config:
@@ -129,6 +130,7 @@ class CreateStudentRequest(BaseModel):
     student_id: str | None = None
     birthday: date | None = None
     is_enrolled: bool = True
+    warnings: int = 0
     sheikh_id: int | None = None
     parent_phones: list[CreateParentPhone] = []
 
@@ -151,6 +153,7 @@ class UpdateStudentRequest(BaseModel):
     birthday: date | None = None
     profile_pic: str | None = None
     is_enrolled: bool | None = None
+    warnings: int | None = None
     parent_phones: list[UpdateParentPhone] | None = None
 
 

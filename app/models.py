@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time, Text, SmallInteger
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -72,6 +72,7 @@ class Student(Base):
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    warnings: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
 
     sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")

@@ -55,6 +55,8 @@ async def migrate():
             await conn.execute(text("ALTER TABLE students ADD COLUMN is_enrolled BOOLEAN NOT NULL DEFAULT 1"))
         if "student_id" not in student_columns:
             await conn.execute(text("ALTER TABLE students ADD COLUMN student_id VARCHAR(50)"))
+        if "warnings" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN warnings SMALLINT NOT NULL DEFAULT 0"))
 
         # — Create parent_phones table —
         result = await conn.execute(text(

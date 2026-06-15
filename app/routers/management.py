@@ -210,6 +210,7 @@ async def get_sheikh_students(
             "birthday": r.student.birthday.isoformat() if r.student.birthday else None,
             "profile_pic": r.student.profile_pic,
             "is_enrolled": r.student.is_enrolled,
+            "warnings": r.student.warnings,
             "parent_phones": [
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
                 for p in r.student.parent_phones
@@ -244,6 +245,7 @@ async def list_students(
             "birthday": s.birthday.isoformat() if s.birthday else None,
             "profile_pic": s.profile_pic,
             "is_enrolled": s.is_enrolled,
+            "warnings": s.warnings,
             "sheikh": {"id": s.sheikhs[0].sheikh.id, "name": s.sheikhs[0].sheikh.name} if s.sheikhs else None,
             "parent_phones": [
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
@@ -266,6 +268,7 @@ async def create_student(
         student_id=body.student_id,
         birthday=body.birthday,
         is_enrolled=body.is_enrolled,
+        warnings=body.warnings,
     )
     db.add(student)
     await db.flush()
@@ -301,6 +304,7 @@ async def create_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
+        "warnings": student.warnings,
     }
 
 
@@ -331,6 +335,8 @@ async def update_student(
         student.profile_pic = body.profile_pic
     if body.is_enrolled is not None:
         student.is_enrolled = body.is_enrolled
+    if body.warnings is not None:
+        student.warnings = body.warnings
     if body.parent_phones is not None:
         for existing in student.parent_phones:
             await db.delete(existing)
@@ -353,6 +359,7 @@ async def update_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
+        "warnings": student.warnings,
     }
 
 
