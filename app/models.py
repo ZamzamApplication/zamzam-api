@@ -11,15 +11,17 @@ class AttendanceStatus(str, enum.Enum):
     present = "حاضر"
     absent = "غياب"
     excused = "غياب بعذر"
+    not_applicable = "لا ينطبق"
 
 
 class ParentType(str, enum.Enum):
     father = "أب"
     mother = "أم"
     brother = "أخ"
-    sister = "إخت"
+    sister = "أخت"
     grandfather = "جد"
     grandmother = "جدة"
+    landline = "أرضي"
 
 
 class UserRole(str, enum.Enum):

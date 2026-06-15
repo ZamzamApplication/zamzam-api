@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -175,3 +175,20 @@ async def confirm_session(
     session.is_confirmed = True
     await db.commit()
     return {"message": "Session confirmed"}
+
+
+@router.delete("/{session_id}")
+async def delete_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.execute(sa_delete(Attendance).where(Attendance.session_id == session_id))
+    await db.delete(session)
+    await db.commit()
+    return {"message": "Session deleted"}
