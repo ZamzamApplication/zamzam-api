@@ -72,11 +72,22 @@ class Student(Base):
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    warnings: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
 
     sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     parent_phones: Mapped[list["ParentPhone"]] = relationship("ParentPhone", back_populates="student", cascade="all, delete-orphan")
+    warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
+
+
+class StudentWarning(Base):
+    __tablename__ = "student_warnings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    student: Mapped[Student] = relationship("Student", back_populates="warnings")
 
 
 class StudentSheikh(Base):

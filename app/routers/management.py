@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, time
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 
-from app.models import Attendance, Circle, CircleSchedule, ParentPhone, ParentType, Session, Sheikh, Student, StudentSheikh, User, UserRole
+from app.models import Attendance, Circle, CircleSchedule, ParentPhone, ParentType, Session, Sheikh, Student, StudentSheikh, StudentWarning, User, UserRole
 from app.routers.auth import get_current_user_depends, pwd_context
 from app.schemas import (
     CreateCircleRequest,
@@ -21,6 +22,7 @@ from app.schemas import (
     CreateSheikhRequest,
     CreateStudentRequest,
     CreateUserRequest,
+    CreateWarningRequest,
     UpdateCircleRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,
@@ -194,6 +196,7 @@ async def get_sheikh_students(
         select(StudentSheikh)
         .options(
             selectinload(StudentSheikh.student).selectinload(Student.parent_phones),
+            selectinload(StudentSheikh.student).selectinload(Student.warnings),
         )
         .where(
             StudentSheikh.sheikh_id == sheikh_id,
@@ -210,7 +213,10 @@ async def get_sheikh_students(
             "birthday": r.student.birthday.isoformat() if r.student.birthday else None,
             "profile_pic": r.student.profile_pic,
             "is_enrolled": r.student.is_enrolled,
-            "warnings": r.student.warnings,
+            "warnings": [
+                {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+                for w in r.student.warnings
+            ],
             "parent_phones": [
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
                 for p in r.student.parent_phones
@@ -232,6 +238,7 @@ async def list_students(
         .options(
             selectinload(Student.sheikhs).selectinload(StudentSheikh.sheikh),
             selectinload(Student.parent_phones),
+            selectinload(Student.warnings),
         )
         .order_by(Student.name)
     )
@@ -245,7 +252,10 @@ async def list_students(
             "birthday": s.birthday.isoformat() if s.birthday else None,
             "profile_pic": s.profile_pic,
             "is_enrolled": s.is_enrolled,
-            "warnings": s.warnings,
+            "warnings": [
+                {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+                for w in s.warnings
+            ],
             "sheikh": {"id": s.sheikhs[0].sheikh.id, "name": s.sheikhs[0].sheikh.name} if s.sheikhs else None,
             "parent_phones": [
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
@@ -268,7 +278,6 @@ async def create_student(
         student_id=body.student_id,
         birthday=body.birthday,
         is_enrolled=body.is_enrolled,
-        warnings=body.warnings,
     )
     db.add(student)
     await db.flush()
@@ -304,7 +313,10 @@ async def create_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
-        "warnings": student.warnings,
+        "warnings": [
+            {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+            for w in student.warnings
+        ],
     }
 
 
@@ -317,7 +329,7 @@ async def update_student(
 ):
     result = await db.execute(
         select(Student)
-        .options(selectinload(Student.parent_phones))
+        .options(selectinload(Student.parent_phones), selectinload(Student.warnings))
         .where(Student.id == student_id)
     )
     student = result.scalar_one_or_none()
@@ -335,8 +347,6 @@ async def update_student(
         student.profile_pic = body.profile_pic
     if body.is_enrolled is not None:
         student.is_enrolled = body.is_enrolled
-    if body.warnings is not None:
-        student.warnings = body.warnings
     if body.parent_phones is not None:
         for existing in student.parent_phones:
             await db.delete(existing)
@@ -359,7 +369,10 @@ async def update_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
-        "warnings": student.warnings,
+        "warnings": [
+            {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+            for w in student.warnings
+        ],
     }
 
 
@@ -402,6 +415,38 @@ async def upload_student_pic(
     student.profile_pic = f"/uploads/{filename}"
     await db.commit()
     return {"profile_pic": student.profile_pic}
+
+
+@router.post("/students/{student_id}/warnings")
+async def add_student_warning(
+    student_id: int,
+    body: CreateWarningRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    warning = StudentWarning(student_id=student.id, reason=body.reason)
+    db.add(warning)
+    await db.commit()
+    await db.refresh(warning)
+
+    if student.phone and settings.WHATSEND_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                msg = f"تنبيه: الطالب {student.name} حصل على إنذار. السبب: {body.reason}"
+                await client.post(
+                    settings.WHATSEND_API_URL,
+                    headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+                    json={"number": student.phone, "message": msg, "provider": "whatsapp"},
+                )
+        except Exception:
+            pass
+
+    return {"id": warning.id, "reason": warning.reason, "created_at": warning.created_at.isoformat()}
 
 
 # ─── Users ──────────────────────────────────────────────────────────────────
@@ -574,6 +619,7 @@ async def reset_database(
     await db.execute(sa_delete(Attendance))
     await db.execute(sa_delete(Session))
     await db.execute(sa_delete(ParentPhone))
+    await db.execute(sa_delete(StudentWarning))
     await db.execute(sa_delete(StudentSheikh))
     await db.execute(sa_delete(Student))
     await db.execute(sa_delete(CircleSchedule))

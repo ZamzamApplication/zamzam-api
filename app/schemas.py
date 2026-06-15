@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, datetime, time
 from pydantic import BaseModel
 
 
@@ -49,6 +49,15 @@ class SheikhOut(BaseModel):
         from_attributes = True
 
 
+class WarningOut(BaseModel):
+    id: int
+    reason: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class StudentOut(BaseModel):
     id: int
     name: str
@@ -57,7 +66,7 @@ class StudentOut(BaseModel):
     birthday: date | None = None
     profile_pic: str | None = None
     is_enrolled: bool = True
-    warnings: int = 0
+    warnings: list[WarningOut] = []
     parent_phones: list[ParentPhoneOut] = []
 
     class Config:
@@ -130,9 +139,12 @@ class CreateStudentRequest(BaseModel):
     student_id: str | None = None
     birthday: date | None = None
     is_enrolled: bool = True
-    warnings: int = 0
     sheikh_id: int | None = None
     parent_phones: list[CreateParentPhone] = []
+
+
+class CreateWarningRequest(BaseModel):
+    reason: str
 
 
 class CreateCircleRequest(BaseModel):
@@ -153,7 +165,6 @@ class UpdateStudentRequest(BaseModel):
     birthday: date | None = None
     profile_pic: str | None = None
     is_enrolled: bool | None = None
-    warnings: int | None = None
     parent_phones: list[UpdateParentPhone] | None = None
 
 

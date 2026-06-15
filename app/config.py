@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     BACKUP_DIR: str = "./backups"
 
+    WHATSEND_API_URL: str = "http://localhost:8000/api/send"
+    WHATSEND_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 

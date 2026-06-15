@@ -55,8 +55,19 @@ async def migrate():
             await conn.execute(text("ALTER TABLE students ADD COLUMN is_enrolled BOOLEAN NOT NULL DEFAULT 1"))
         if "student_id" not in student_columns:
             await conn.execute(text("ALTER TABLE students ADD COLUMN student_id VARCHAR(50)"))
-        if "warnings" not in student_columns:
-            await conn.execute(text("ALTER TABLE students ADD COLUMN warnings SMALLINT NOT NULL DEFAULT 0"))
+        # — Create student_warnings table —
+        result = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='student_warnings'"
+        ))
+        if not result.scalar_one_or_none():
+            await conn.execute(text("""
+                CREATE TABLE student_warnings (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL REFERENCES students(id),
+                    reason TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
 
         # — Create parent_phones table —
         result = await conn.execute(text(
