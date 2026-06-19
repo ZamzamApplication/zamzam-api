@@ -97,21 +97,6 @@ async def student_streak(
     current_user=Depends(get_current_user_depends),
 ):
     result = await db.execute(
-        select(Attendance)
-        .where(
-            Attendance.student_id == student_id,
-            Attendance.status == AttendanceStatus.present,
-        )
-        .join(Session)
-        .where(Session.is_confirmed == True)
-        .order_by(Session.date.desc())
-        .limit(1)
-    )
-    last_present = result.scalar_one_or_none()
-    if not last_present:
-        return {"student_id": student_id, "current_streak": 0}
-
-    result = await db.execute(
         select(func.count(Attendance.id))
         .where(
             Attendance.student_id == student_id,
