@@ -166,6 +166,10 @@ class MoveStudentRequest(BaseModel):
     sheikh_id: int
 
 
+class ReorderStudentsRequest(BaseModel):
+    student_ids: list[int]
+
+
 class CreateCircleRequest(BaseModel):
     name: str
     description: str | None = None

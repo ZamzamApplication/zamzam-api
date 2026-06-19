@@ -204,6 +204,7 @@ async def get_sheikh_students(
             StudentSheikh.sheikh_id == sheikh_id,
             StudentSheikh.end_date.is_(None),
         )
+        .order_by(StudentSheikh.sort_order)
     )
     records = result.scalars().all()
     return [
@@ -450,6 +451,28 @@ async def move_student_sheikh(
     db.add(new_ss)
     await db.commit()
     return {"message": f"تم نقل الطالب إلى الشيخ {body.sheikh_id}"}
+
+
+@router.put("/sheikhs/{sheikh_id}/students/reorder")
+async def reorder_students(
+    sheikh_id: int,
+    body: ReorderStudentsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    for i, student_id in enumerate(body.student_ids):
+        result = await db.execute(
+            select(StudentSheikh).where(
+                StudentSheikh.sheikh_id == sheikh_id,
+                StudentSheikh.student_id == student_id,
+                StudentSheikh.end_date.is_(None),
+            )
+        )
+        ss = result.scalar_one_or_none()
+        if ss:
+            ss.sort_order = i
+    await db.commit()
+    return {"message": "تم إعادة الترتيب"}
 
 
 @router.post("/students/{student_id}/warnings")
