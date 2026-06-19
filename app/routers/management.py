@@ -49,7 +49,7 @@ async def list_sheikhs(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    result = await db.execute(select(Sheikh))
+    result = await db.execute(select(Sheikh).options(selectinload(Sheikh.circle)))
     sheikhs = result.scalars().all()
     return [
         {
