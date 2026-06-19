@@ -24,6 +24,7 @@ from app.schemas import (
     CreateUserRequest,
     CreateWarningRequest,
     MoveStudentRequest,
+    ReorderStudentsRequest,
     UpdateCircleRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,

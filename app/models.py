@@ -101,6 +101,7 @@ class StudentSheikh(Base):
     sheikh_id: Mapped[int] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     student: Mapped[Student] = relationship("Student", back_populates="sheikhs")
     sheikh: Mapped[Sheikh] = relationship("Sheikh", back_populates="students")

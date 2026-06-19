@@ -122,6 +122,12 @@ async def migrate():
         if "name" not in parent_phone_columns:
             await conn.execute(text("ALTER TABLE parent_phones ADD COLUMN name VARCHAR(100)"))
 
+        # — Add sort_order to student_sheikhs table —
+        result = await conn.execute(text("PRAGMA table_info(student_sheikhs)"))
+        ss_columns = {row[1] for row in result.fetchall()}
+        if "sort_order" not in ss_columns:
+            await conn.execute(text("ALTER TABLE student_sheikhs ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
+
         # — Add sheikh_id to attendance table —
         result = await conn.execute(text("PRAGMA table_info(attendance)"))
         att_columns = {row[1]: row for row in result.fetchall()}
