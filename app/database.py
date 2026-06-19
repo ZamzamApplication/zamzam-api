@@ -125,6 +125,30 @@ async def migrate():
         if "sheikh_id" not in att_columns:
             await conn.execute(text("ALTER TABLE attendance ADD COLUMN sheikh_id INTEGER REFERENCES sheikhs(id)"))
 
+        # — Ensure users table has password_hash column (rename from hashed_password if needed) —
+        result = await conn.execute(text("PRAGMA table_info(users)"))
+        user_columns = {row[1] for row in result.fetchall()}
+        if "hashed_password" in user_columns and "password_hash" not in user_columns:
+            await conn.execute(text("PRAGMA foreign_keys=OFF"))
+            await conn.execute(text("""
+                CREATE TABLE users_new (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    username VARCHAR(50) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL DEFAULT '',
+                    role VARCHAR(10) NOT NULL DEFAULT 'admin',
+                    sheikh_id INTEGER REFERENCES sheikhs(id)
+                )
+            """))
+            await conn.execute(text(
+                "INSERT INTO users_new (id, username, password_hash, role, sheikh_id) "
+                "SELECT id, username, hashed_password, role, sheikh_id FROM users"
+            ))
+            await conn.execute(text("DROP TABLE users"))
+            await conn.execute(text("ALTER TABLE users_new RENAME TO users"))
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+        elif "password_hash" not in user_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''"))
+
         # — Migrate sheikh_id + sort_order from student_sheikhs to students —
         result = await conn.execute(text("PRAGMA table_info(students)"))
         student_columns = {row[1] for row in result.fetchall()}

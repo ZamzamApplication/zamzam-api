@@ -52,7 +52,7 @@ async def get_current_user_depends(
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == request.username))
     user = result.scalar_one_or_none()
-    if not user or not pwd_context.verify(request.password, user.hashed_password):
+    if not user or not pwd_context.verify(request.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     token = create_access_token({"sub": user.username, "role": user.role.value})
