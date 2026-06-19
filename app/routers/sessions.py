@@ -166,7 +166,7 @@ async def get_session_attendance(
                     continue
                 # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
                 default_sheikh_id = ss.sheikh_id
-                att_sheikh_id = att.sheikh_id if att else default_sheikh_id
+                att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
                 students_list.append({
                     "id": ss.student.id,
                     "name": ss.student.name,
