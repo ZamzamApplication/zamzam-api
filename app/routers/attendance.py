@@ -28,8 +28,10 @@ async def update_attendance(
     attendance.status = AttendanceStatus(body.status)
     if body.notes is not None:
         attendance.notes = body.notes
+    if body.sheikh_id is not None:
+        attendance.sheikh_id = body.sheikh_id
     await db.commit()
-    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes}
+    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes, "sheikh_id": attendance.sheikh_id}
 
 
 @router.post("/upsert")
@@ -53,15 +55,18 @@ async def upsert_attendance(
         attendance.status = AttendanceStatus(body.status)
         if body.notes is not None:
             attendance.notes = body.notes
+        if body.sheikh_id is not None:
+            attendance.sheikh_id = body.sheikh_id
     else:
         attendance = Attendance(
             session_id=body.session_id,
             student_id=body.student_id,
             status=AttendanceStatus(body.status),
             notes=body.notes,
+            sheikh_id=body.sheikh_id,
         )
         db.add(attendance)
 
     await db.commit()
     await db.refresh(attendance)
-    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes, "session_id": attendance.session_id, "student_id": attendance.student_id}
+    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes, "session_id": attendance.session_id, "student_id": attendance.student_id, "sheikh_id": attendance.sheikh_id}

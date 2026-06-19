@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, StudentSheikh
+from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentSheikh
 from app.routers.auth import get_current_user_depends
-from app.schemas import CreateSessionRequest
+from app.schemas import CreateSessionRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -104,6 +104,23 @@ async def create_session(
     return {"id": session.id, "date": session.date.isoformat(), "circle_id": session.circle_id}
 
 
+@router.put("/{session_id}")
+async def update_session(
+    session_id: int,
+    body: UpdateSessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.date = body.session_date
+    await db.commit()
+    return {"id": session.id, "date": session.date.isoformat()}
+
+
 @router.get("/{session_id}/attendance")
 async def get_session_attendance(
     session_id: int,
@@ -126,6 +143,12 @@ async def get_session_attendance(
     )
     circle_sheikhs = result.scalars().all()
 
+    # Get all sheikhs in this circle for the dropdown
+    circle_sheikhs_list = [
+        {"id": s.id, "name": s.name}
+        for s in circle_sheikhs
+    ]
+
     sheikh_groups = []
     for sheikh in circle_sheikhs:
         students_list = []
@@ -141,6 +164,9 @@ async def get_session_attendance(
                 # For confirmed sessions, only show students that have an attendance record
                 if session.is_confirmed and att is None:
                     continue
+                # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
+                default_sheikh_id = ss.sheikh_id
+                att_sheikh_id = att.sheikh_id if att else default_sheikh_id
                 students_list.append({
                     "id": ss.student.id,
                     "name": ss.student.name,
@@ -148,6 +174,7 @@ async def get_session_attendance(
                     "attendance_id": att.id if att else None,
                     "status": att.status.value if att else "غياب",
                     "notes": att.notes if att else None,
+                    "sheikh_id": att_sheikh_id,
                 })
 
         sheikh_groups.append({
@@ -162,6 +189,7 @@ async def get_session_attendance(
         "circle_id": session.circle_id,
         "circle_name": session.circle.name,
         "sheikh_groups": sheikh_groups,
+        "circle_sheikhs": circle_sheikhs_list,
     }
 
 

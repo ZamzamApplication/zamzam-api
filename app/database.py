@@ -122,6 +122,12 @@ async def migrate():
         if "name" not in parent_phone_columns:
             await conn.execute(text("ALTER TABLE parent_phones ADD COLUMN name VARCHAR(100)"))
 
+        # — Add sheikh_id to attendance table —
+        result = await conn.execute(text("PRAGMA table_info(attendance)"))
+        att_columns = {row[1]: row for row in result.fetchall()}
+        if "sheikh_id" not in att_columns:
+            await conn.execute(text("ALTER TABLE attendance ADD COLUMN sheikh_id INTEGER REFERENCES sheikhs(id)"))
+
 
 async def init_db():
     async with engine.begin() as conn:

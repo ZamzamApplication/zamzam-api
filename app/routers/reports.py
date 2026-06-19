@@ -76,8 +76,9 @@ async def circle_attendance_rate(
     )
     excused = result.scalar() or 0
 
-    absent = total - present - excused
-    rate = round((present / total * 100), 1) if total > 0 else 0
+    attended = present + excused
+    absent = total - attended
+    rate = round((attended / total * 100), 1) if total > 0 else 0
 
     return {
         "circle_id": circle_id,
@@ -140,12 +141,26 @@ async def student_streak(
     )
     present = present_count.scalar() or 0
 
+    result = await db.execute(
+        select(func.count(Attendance.id))
+        .where(
+            Attendance.student_id == student_id,
+            Attendance.status == AttendanceStatus.excused,
+        )
+        .join(Session)
+        .where(Session.is_confirmed == True)
+    )
+    excused = result.scalar() or 0
+
+    attended = present + excused
+
     return {
         "student_id": student_id,
         "total_attended": present,
+        "total_excused": excused,
         "total_absent": total_absent,
         "total_sessions": total,
-        "attendance_rate": round((present / total * 100), 1) if total > 0 else 0,
+        "attendance_rate": round((attended / total * 100), 1) if total > 0 else 0,
     }
 
 
@@ -202,7 +217,8 @@ async def attendance_grid(
     # Build lookup: (student_id, session_id) -> status
     att_lookup: dict[tuple[int, int], str] = {}
     for att in attendance_records:
-        att_lookup[(att.student_id, att.session_id)] = att.status.value
+        if att.student_id is not None:
+            att_lookup[(att.student_id, att.session_id)] = att.status.value
 
     # Build student grid data
     students_data = []

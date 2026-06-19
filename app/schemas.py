@@ -84,6 +84,7 @@ class AttendanceOut(BaseModel):
     student_name: str
     status: str
     notes: str | None = None
+    sheikh_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -115,6 +116,7 @@ class SessionOut(BaseModel):
 class UpdateAttendanceRequest(BaseModel):
     status: str
     notes: str | None = None
+    sheikh_id: int | None = None
 
 
 class UpsertAttendanceRequest(BaseModel):
@@ -122,12 +124,17 @@ class UpsertAttendanceRequest(BaseModel):
     student_id: int
     status: str
     notes: str | None = None
+    sheikh_id: int | None = None
 
 
 class CreateSessionRequest(BaseModel):
     circle_id: int
     session_date: date
     session_time: time | None = None
+
+
+class UpdateSessionRequest(BaseModel):
+    session_date: date
 
 
 class ConfirmSessionRequest(BaseModel):
@@ -153,6 +160,10 @@ class CreateStudentRequest(BaseModel):
 
 class CreateWarningRequest(BaseModel):
     reason: str
+
+
+class MoveStudentRequest(BaseModel):
+    sheikh_id: int
 
 
 class CreateCircleRequest(BaseModel):

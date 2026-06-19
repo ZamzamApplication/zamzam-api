@@ -23,6 +23,7 @@ from app.schemas import (
     CreateStudentRequest,
     CreateUserRequest,
     CreateWarningRequest,
+    MoveStudentRequest,
     UpdateCircleRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,
@@ -407,6 +408,47 @@ async def upload_student_pic(
     student.profile_pic = f"/uploads/{filename}"
     await db.commit()
     return {"profile_pic": student.profile_pic}
+
+
+@router.post("/students/{student_id}/move-sheikh")
+async def move_student_sheikh(
+    student_id: int,
+    body: MoveStudentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(
+        select(StudentSheikh)
+        .where(
+            StudentSheikh.student_id == student_id,
+            StudentSheikh.end_date.is_(None),
+        )
+    )
+    current_ss = result.scalar_one_or_none()
+    if current_ss:
+        if current_ss.sheikh_id == body.sheikh_id:
+            raise HTTPException(status_code=400, detail="الطالب بالفعل تحت هذا الشيخ")
+        current_ss.end_date = date.today()
+
+    result = await db.execute(
+        select(Student).where(Student.id == student_id)
+    )
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    result = await db.execute(select(Sheikh).where(Sheikh.id == body.sheikh_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Sheikh not found")
+
+    new_ss = StudentSheikh(
+        student_id=student_id,
+        sheikh_id=body.sheikh_id,
+        start_date=date.today(),
+    )
+    db.add(new_ss)
+    await db.commit()
+    return {"message": f"تم نقل الطالب إلى الشيخ {body.sheikh_id}"}
 
 
 @router.post("/students/{student_id}/warnings")

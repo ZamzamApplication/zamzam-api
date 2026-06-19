@@ -148,8 +148,10 @@ class Attendance(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
     student_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("students.id"), nullable=True)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     status: Mapped[AttendanceStatus] = mapped_column(Enum(AttendanceStatus), default=AttendanceStatus.absent, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")
     student: Mapped[Student] = relationship("Student", back_populates="attendance_records")
+    session_sheikh: Mapped[Sheikh | None] = relationship("Sheikh")
