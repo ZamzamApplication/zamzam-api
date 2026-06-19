@@ -147,6 +147,7 @@ async def get_session_attendance(
                     "phone": ss.student.phone,
                     "attendance_id": att.id if att else None,
                     "status": att.status.value if att else "غياب",
+                    "notes": att.notes if att else None,
                 })
 
         sheikh_groups.append({

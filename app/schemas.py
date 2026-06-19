@@ -80,6 +80,7 @@ class AttendanceOut(BaseModel):
     student_id: int
     student_name: str
     status: str
+    notes: str | None = None
 
     class Config:
         from_attributes = True
@@ -110,12 +111,14 @@ class SessionOut(BaseModel):
 
 class UpdateAttendanceRequest(BaseModel):
     status: str
+    notes: str | None = None
 
 
 class UpsertAttendanceRequest(BaseModel):
     session_id: int
     student_id: int
     status: str
+    notes: str | None = None
 
 
 class CreateSessionRequest(BaseModel):

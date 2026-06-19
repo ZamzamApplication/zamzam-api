@@ -89,6 +89,12 @@ async def migrate():
         if "registration_date" not in student_columns:
             await conn.execute(text("ALTER TABLE students ADD COLUMN registration_date DATE"))
 
+        # — Add notes to attendance table —
+        result = await conn.execute(text("PRAGMA table_info(attendance)"))
+        att_columns = {row[1] for row in result.fetchall()}
+        if "notes" not in att_columns:
+            await conn.execute(text("ALTER TABLE attendance ADD COLUMN notes TEXT"))
+
         # — Make attendance.student_id nullable —
         result = await conn.execute(text("PRAGMA table_info(attendance)"))
         att_columns = {row[1]: row for row in result.fetchall()}
