@@ -116,6 +116,12 @@ async def migrate():
             await conn.execute(text("ALTER TABLE attendance_new RENAME TO attendance"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
 
+        # — Add name column to parent_phones table —
+        result = await conn.execute(text("PRAGMA table_info(parent_phones)"))
+        parent_phone_columns = {row[1] for row in result.fetchall()}
+        if "name" not in parent_phone_columns:
+            await conn.execute(text("ALTER TABLE parent_phones ADD COLUMN name VARCHAR(100)"))
+
 
 async def init_db():
     async with engine.begin() as conn:

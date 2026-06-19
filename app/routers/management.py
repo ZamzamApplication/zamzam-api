@@ -219,15 +219,13 @@ async def get_sheikh_students(
                 for w in r.student.warnings
             ],
             "parent_phones": [
-                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
+                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value, "name": p.name}
                 for p in r.student.parent_phones
             ],
         }
         for r in records
     ]
 
-
-# ─── Students ───────────────────────────────────────────────────────────────
 
 @router.get("/students")
 async def list_students(
@@ -260,7 +258,7 @@ async def list_students(
             ],
             "sheikh": {"id": s.sheikhs[0].sheikh.id, "name": s.sheikhs[0].sheikh.name} if s.sheikhs else None,
             "parent_phones": [
-                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value}
+                {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value, "name": p.name}
                 for p in s.parent_phones
             ],
         }
@@ -303,6 +301,7 @@ async def create_student(
             student_id=student.id,
             phone_number=pp.phone_number,
             parent_type=ParentType(pp.parent_type),
+            name=pp.name,
         )
         db.add(parent_phone)
 
@@ -363,6 +362,7 @@ async def update_student(
                 student_id=student.id,
                 phone_number=pp.phone_number,
                 parent_type=ParentType(pp.parent_type) if pp.parent_type else None,
+                name=pp.name,
             )
             db.add(parent_phone)
     await db.commit()

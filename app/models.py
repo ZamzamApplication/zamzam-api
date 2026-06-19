@@ -113,6 +113,7 @@ class ParentPhone(Base):
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
     parent_type: Mapped[ParentType] = mapped_column(Enum(ParentType), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     student: Mapped[Student] = relationship("Student", back_populates="parent_phones")
 

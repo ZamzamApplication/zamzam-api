@@ -6,6 +6,7 @@ class ParentPhoneOut(BaseModel):
     id: int
     phone_number: str
     parent_type: str
+    name: str | None = None
 
     class Config:
         from_attributes = True
@@ -14,11 +15,13 @@ class ParentPhoneOut(BaseModel):
 class CreateParentPhone(BaseModel):
     phone_number: str
     parent_type: str
+    name: str | None = None
 
 
 class UpdateParentPhone(BaseModel):
     phone_number: str | None = None
     parent_type: str | None = None
+    name: str | None = None
 
 
 class Token(BaseModel):
