@@ -213,6 +213,7 @@ async def get_sheikh_students(
             "birthday": r.student.birthday.isoformat() if r.student.birthday else None,
             "profile_pic": r.student.profile_pic,
             "is_enrolled": r.student.is_enrolled,
+            "registration_date": r.student.registration_date.isoformat() if r.student.registration_date else None,
             "warnings": [
                 {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
                 for w in r.student.warnings
@@ -252,6 +253,7 @@ async def list_students(
             "birthday": s.birthday.isoformat() if s.birthday else None,
             "profile_pic": s.profile_pic,
             "is_enrolled": s.is_enrolled,
+            "registration_date": s.registration_date.isoformat() if s.registration_date else None,
             "warnings": [
                 {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
                 for w in s.warnings
@@ -278,6 +280,7 @@ async def create_student(
         student_id=body.student_id,
         birthday=body.birthday,
         is_enrolled=body.is_enrolled,
+        registration_date=body.registration_date or date.today(),
     )
     db.add(student)
     await db.flush()
@@ -313,6 +316,7 @@ async def create_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
+        "registration_date": student.registration_date.isoformat() if student.registration_date else None,
         "warnings": [
             {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
             for w in student.warnings
@@ -347,6 +351,8 @@ async def update_student(
         student.profile_pic = body.profile_pic
     if body.is_enrolled is not None:
         student.is_enrolled = body.is_enrolled
+    if body.registration_date is not None:
+        student.registration_date = body.registration_date
     if body.parent_phones is not None:
         for existing in student.parent_phones:
             await db.delete(existing)
@@ -369,26 +375,12 @@ async def update_student(
         "birthday": student.birthday.isoformat() if student.birthday else None,
         "profile_pic": student.profile_pic,
         "is_enrolled": student.is_enrolled,
+        "registration_date": student.registration_date.isoformat() if student.registration_date else None,
         "warnings": [
             {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
             for w in student.warnings
         ],
     }
-
-
-@router.delete("/students/{student_id}")
-async def delete_student(
-    student_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
-):
-    result = await db.execute(select(Student).where(Student.id == student_id))
-    student = result.scalar_one_or_none()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-    await db.delete(student)
-    await db.commit()
-    return {"message": "Student deleted"}
 
 
 @router.post("/students/{student_id}/upload-pic")

@@ -74,6 +74,7 @@ class Student(Base):
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    registration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
@@ -145,7 +146,7 @@ class Attendance(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    student_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("students.id"), nullable=True)
     status: Mapped[AttendanceStatus] = mapped_column(Enum(AttendanceStatus), default=AttendanceStatus.absent, nullable=False)
 
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")

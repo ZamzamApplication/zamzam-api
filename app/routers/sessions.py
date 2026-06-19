@@ -138,6 +138,9 @@ async def get_session_attendance(
                     )
                 )
                 att = att_result.scalar_one_or_none()
+                # For confirmed sessions, only show students that have an attendance record
+                if session.is_confirmed and att is None:
+                    continue
                 students_list.append({
                     "id": ss.student.id,
                     "name": ss.student.name,

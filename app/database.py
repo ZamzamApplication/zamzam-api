@@ -83,6 +83,33 @@ async def migrate():
                 )
             """))
 
+        # — Add registration_date to students table —
+        result = await conn.execute(text("PRAGMA table_info(students)"))
+        student_columns = {row[1] for row in result.fetchall()}
+        if "registration_date" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN registration_date DATE"))
+
+        # — Make attendance.student_id nullable —
+        result = await conn.execute(text("PRAGMA table_info(attendance)"))
+        att_columns = {row[1]: row for row in result.fetchall()}
+        if "student_id" in att_columns and att_columns["student_id"][3] == 1:  # notnull == 1
+            await conn.execute(text("PRAGMA foreign_keys=OFF"))
+            await conn.execute(text("""
+                CREATE TABLE attendance_new (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL REFERENCES sessions(id),
+                    student_id INTEGER REFERENCES students(id),
+                    status VARCHAR(20) NOT NULL DEFAULT 'غياب'
+                )
+            """))
+            await conn.execute(text(
+                "INSERT INTO attendance_new (id, session_id, student_id, status) "
+                "SELECT id, session_id, student_id, status FROM attendance"
+            ))
+            await conn.execute(text("DROP TABLE attendance"))
+            await conn.execute(text("ALTER TABLE attendance_new RENAME TO attendance"))
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+
 
 async def init_db():
     async with engine.begin() as conn:
