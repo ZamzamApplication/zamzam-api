@@ -1,17 +1,22 @@
 import enum
-from datetime import date, datetime, time
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Time, Text, SmallInteger
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 
 class AttendanceStatus(str, enum.Enum):
-    present = "حاضر"
-    absent = "غياب"
-    excused = "غياب بعذر"
-    not_applicable = "لا ينطبق"
+    present = "حاضر"  # noqa: F821
+    absent = "غياب"  # noqa: F821
+    excused = "غياب بعذر"  # noqa: F821
+    not_applicable = "لا ينطبق"  # noqa: F821
+
+
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    sheikh = "sheikh"
 
 
 class ParentType(str, enum.Enum):
@@ -21,12 +26,7 @@ class ParentType(str, enum.Enum):
     sister = "أخت"
     grandfather = "جد"
     grandmother = "جدة"
-    landline = "أرضي"
-
-
-class UserRole(str, enum.Enum):
-    admin = "admin"
-    sheikh = "sheikh"
+    guardian = "أرضي"
 
 
 class User(Base):
@@ -34,8 +34,8 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.admin, nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
 
 
@@ -47,8 +47,7 @@ class Circle(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle")
-    schedules: Mapped[list["CircleSchedule"]] = relationship("CircleSchedule", back_populates="circle", cascade="all, delete-orphan")
+    sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle", cascade="all, delete-orphan")
 
 
 class Sheikh(Base):
@@ -60,7 +59,7 @@ class Sheikh(Base):
     circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
 
     circle: Mapped[Circle] = relationship("Circle", back_populates="sheikhs")
-    students: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="sheikh", cascade="all, delete-orphan")
+    students: Mapped[list["Student"]] = relationship("Student", back_populates="sheikh", foreign_keys="[Student.sheikh_id]")
     user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
 
 
@@ -75,8 +74,10 @@ class Student(Base):
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     registration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    sheikhs: Mapped[list["StudentSheikh"]] = relationship("StudentSheikh", back_populates="student", cascade="all, delete-orphan")
+    sheikh: Mapped[Sheikh | None] = relationship("Sheikh", back_populates="students")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     parent_phones: Mapped[list["ParentPhone"]] = relationship("ParentPhone", back_populates="student", cascade="all, delete-orphan")
     warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
@@ -93,20 +94,6 @@ class StudentWarning(Base):
     student: Mapped[Student] = relationship("Student", back_populates="warnings")
 
 
-class StudentSheikh(Base):
-    __tablename__ = "student_sheikhs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
-    sheikh_id: Mapped[int] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=False)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
-    student: Mapped[Student] = relationship("Student", back_populates="sheikhs")
-    sheikh: Mapped[Sheikh] = relationship("Sheikh", back_populates="students")
-
-
 class ParentPhone(Base):
     __tablename__ = "parent_phones"
 
@@ -119,24 +106,13 @@ class ParentPhone(Base):
     student: Mapped[Student] = relationship("Student", back_populates="parent_phones")
 
 
-class CircleSchedule(Base):
-    __tablename__ = "circle_schedules"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
-    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)
-    time: Mapped[time] = mapped_column(Time, nullable=False)
-
-    circle: Mapped[Circle] = relationship("Circle", back_populates="schedules")
-
-
 class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
-    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False, default=1)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     circle: Mapped[Circle] = relationship("Circle")

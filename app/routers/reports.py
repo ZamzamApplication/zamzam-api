@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Student, Sheikh, StudentSheikh
+from app.models import Attendance, AttendanceStatus, Circle, Session, Student, Sheikh
 from app.routers.auth import get_current_user_depends
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -28,7 +28,7 @@ async def circle_attendance_rate(
 ):
     # Get all students belonging to this circle's sheikhs
     result = await db.execute(
-        select(StudentSheikh.student_id)
+        select(Student.id)
         .join(Sheikh)
         .where(Sheikh.circle_id == circle_id)
     )
@@ -170,16 +170,16 @@ async def attendance_grid(
     # Get students
     if sheikh_id:
         result = await db.execute(
-            select(StudentSheikh)
-            .options(selectinload(StudentSheikh.student))
+            select(Student)
             .where(
-                StudentSheikh.sheikh_id == sheikh_id,
-                StudentSheikh.end_date.is_(None),
+                Student.sheikh_id == sheikh_id,
+                Student.is_enrolled == True,
             )
+            .order_by(Student.sort_order)
         )
-        ss_records = result.scalars().all()
-        student_ids = [r.student_id for r in ss_records]
-        student_map = {r.student.id: r.student for r in ss_records}
+        students = result.scalars().all()
+        student_ids = [s.id for s in students]
+        student_map = {s.id: s for s in students}
     else:
         result = await db.execute(select(Student).order_by(Student.name))
         students = result.scalars().all()

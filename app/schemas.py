@@ -189,6 +189,7 @@ class UpdateStudentRequest(BaseModel):
     profile_pic: str | None = None
     is_enrolled: bool | None = None
     registration_date: date | None = None
+    sheikh_id: int | None = None
     parent_phones: list[UpdateParentPhone] | None = None
 
 
@@ -221,17 +222,5 @@ class UserOut(BaseModel):
         from_attributes = True
 
 
-class CreateCircleScheduleRequest(BaseModel):
-    circle_id: int
-    day_of_week: int
-    time: str
 
 
-class CircleScheduleOut(BaseModel):
-    id: int
-    circle_id: int
-    day_of_week: int
-    time: str
-
-    class Config:
-        from_attributes = True
