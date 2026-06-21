@@ -80,7 +80,7 @@ class Student(Base):
     student_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[StudentStatus] = mapped_column(Enum(StudentStatus), default=StudentStatus.enrolled, nullable=False)
+    status: Mapped[StudentStatus] = mapped_column(Enum(StudentStatus, values_callable=lambda x: [e.value for e in x]), default=StudentStatus.enrolled, nullable=False)
     registration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
