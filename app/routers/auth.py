@@ -48,6 +48,12 @@ async def get_current_user_depends(
     return await get_current_user(credentials.credentials, db)
 
 
+async def require_admin(current_user: User = Depends(get_current_user_depends)) -> User:
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
 @router.post("/login", response_model=Token)
 async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == request.username))

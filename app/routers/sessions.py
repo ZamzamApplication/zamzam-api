@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus
-from app.routers.auth import get_current_user_depends
+from app.routers.auth import get_current_user_depends, require_admin
 from app.schemas import CreateSessionRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -91,7 +91,7 @@ async def get_upcoming_sessions(
 async def create_session(
     body: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Circle).where(Circle.id == body.circle_id))
     if not result.scalar_one_or_none():
@@ -109,7 +109,7 @@ async def update_session(
     session_id: int,
     body: UpdateSessionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -195,7 +195,7 @@ async def get_session_attendance(
 async def confirm_session(
     session_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -239,7 +239,7 @@ async def confirm_session(
 async def delete_session(
     session_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()

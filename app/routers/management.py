@@ -14,7 +14,7 @@ from app.config import settings
 from app.database import get_db
 
 from app.models import Attendance, Circle, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, User, UserRole
-from app.routers.auth import get_current_user_depends, pwd_context
+from app.routers.auth import pwd_context, require_admin
 from app.schemas import (
     CreateCircleRequest,
     CreateParentPhone,
@@ -47,7 +47,7 @@ def pic_url(path: str) -> str:
 @router.get("/sheikhs")
 async def list_sheikhs(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Sheikh).options(selectinload(Sheikh.circle)))
     sheikhs = result.scalars().all()
@@ -67,7 +67,7 @@ async def list_sheikhs(
 async def create_sheikh(
     body: CreateSheikhRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     sheikh = Sheikh(name=body.name, phone=body.phone, circle_id=body.circle_id)
     db.add(sheikh)
@@ -80,7 +80,7 @@ async def update_sheikh(
     sheikh_id: int,
     body: UpdateSheikhRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id))
     sheikh = result.scalar_one_or_none()
@@ -100,7 +100,7 @@ async def update_sheikh(
 async def delete_sheikh(
     sheikh_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id))
     sheikh = result.scalar_one_or_none()
@@ -119,7 +119,7 @@ async def delete_sheikh(
 async def get_sheikh_students(
     sheikh_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(
         select(Student)
@@ -161,7 +161,7 @@ async def reorder_students(
     sheikh_id: int,
     body: ReorderStudentsRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     for i, student_id in enumerate(body.student_ids):
         result = await db.execute(
@@ -183,7 +183,7 @@ async def reorder_students(
 @router.get("/students")
 async def list_students(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(
         select(Student)
@@ -223,7 +223,7 @@ async def list_students(
 async def create_student(
     body: CreateStudentRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     student = Student(
         name=body.name,
@@ -258,7 +258,7 @@ async def update_student(
     student_id: int,
     body: UpdateStudentRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(
         select(Student)
@@ -310,7 +310,7 @@ async def delete_student(
     student_id: int,
     delete_sessions: bool = False,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(
         select(Student)
@@ -339,7 +339,7 @@ async def move_student_sheikh(
     student_id: int,
     body: MoveStudentRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Student).where(Student.id == student_id))
     student = result.scalar_one_or_none()
@@ -364,7 +364,7 @@ async def add_warning(
     student_id: int,
     body: CreateWarningRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Student).where(Student.id == student_id))
     if not result.scalar_one_or_none():
@@ -382,7 +382,7 @@ async def update_warning(
     warning_id: int,
     body: CreateWarningRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
     warning = result.scalar_one_or_none()
@@ -399,7 +399,7 @@ async def update_warning(
 async def delete_warning(
     warning_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
     warning = result.scalar_one_or_none()
@@ -416,7 +416,7 @@ async def upload_student_pic(
     student_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Student).where(Student.id == student_id))
     student = result.scalar_one_or_none()
@@ -441,7 +441,7 @@ async def upload_student_pic(
 @router.get("/circles")
 async def list_circles(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Circle))
     circles = result.scalars().all()
@@ -452,7 +452,7 @@ async def list_circles(
 async def create_circle(
     body: CreateCircleRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     circle = Circle(name=body.name, description=body.description)
     db.add(circle)
@@ -465,7 +465,7 @@ async def update_circle(
     circle_id: int,
     body: UpdateCircleRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Circle).where(Circle.id == circle_id))
     circle = result.scalar_one_or_none()
@@ -483,7 +483,7 @@ async def update_circle(
 async def delete_circle(
     circle_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(Circle).where(Circle.id == circle_id))
     circle = result.scalar_one_or_none()
@@ -502,7 +502,7 @@ async def delete_circle(
 @router.get("/users")
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(User))
     users = result.scalars().all()
@@ -516,7 +516,7 @@ async def list_users(
 async def create_user(
     body: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     existing = await db.execute(select(User).where(User.username == body.username))
     if existing.scalar_one_or_none():
@@ -538,7 +538,7 @@ async def update_user(
     user_id: int,
     body: UpdateUserRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -562,7 +562,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    _=Depends(require_admin),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()

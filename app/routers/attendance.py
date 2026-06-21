@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus
+from app.models import Attendance, AttendanceStatus, User
 from app.routers.auth import get_current_user_depends
 from app.schemas import UpdateAttendanceRequest, UpsertAttendanceRequest
 
@@ -15,7 +15,7 @@ async def update_attendance(
     attendance_id: int,
     body: UpdateAttendanceRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    current_user: User = Depends(get_current_user_depends),
 ):
     if body.status not in [s.value for s in AttendanceStatus]:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {[s.value for s in AttendanceStatus]}")
@@ -38,7 +38,7 @@ async def update_attendance(
 async def upsert_attendance(
     body: UpsertAttendanceRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    current_user: User = Depends(get_current_user_depends),
 ):
     if body.status not in [s.value for s in AttendanceStatus]:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {[s.value for s in AttendanceStatus]}")
