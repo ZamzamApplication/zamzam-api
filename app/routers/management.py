@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 
-from app.models import Attendance, Circle, ParentPhone, ParentType, Session, Sheikh, Student, StudentWarning, User, UserRole
+from app.models import Attendance, Circle, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, User, UserRole
 from app.routers.auth import get_current_user_depends, pwd_context
 from app.schemas import (
     CreateCircleRequest,
@@ -141,7 +141,7 @@ async def get_sheikh_students(
             "student_id": r.student_id,
             "birthday": r.birthday.isoformat() if r.birthday else None,
             "profile_pic": r.profile_pic,
-            "is_enrolled": r.is_enrolled,
+            "status": r.status.value,
             "registration_date": r.registration_date.isoformat() if r.registration_date else None,
             "warnings": [
                 {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
@@ -203,7 +203,7 @@ async def list_students(
             "student_id": s.student_id,
             "birthday": s.birthday.isoformat() if s.birthday else None,
             "profile_pic": s.profile_pic,
-            "is_enrolled": s.is_enrolled,
+            "status": s.status.value,
             "registration_date": s.registration_date.isoformat() if s.registration_date else None,
             "warnings": [
                 {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
@@ -230,7 +230,7 @@ async def create_student(
         phone=body.phone,
         student_id=body.student_id,
         birthday=body.birthday,
-        is_enrolled=body.is_enrolled,
+        status=StudentStatus(body.status),
         registration_date=body.registration_date or date.today(),
         sheikh_id=body.sheikh_id,
     )
@@ -281,8 +281,8 @@ async def update_student(
         student.birthday = body.birthday
     if body.profile_pic is not None:
         student.profile_pic = body.profile_pic
-    if body.is_enrolled is not None:
-        student.is_enrolled = body.is_enrolled
+    if body.status is not None:
+        student.status = StudentStatus(body.status)
     if body.registration_date is not None:
         student.registration_date = body.registration_date
     if body.sheikh_id is not None:
@@ -373,7 +373,42 @@ async def add_warning(
     warning = StudentWarning(student_id=student_id, reason=body.reason)
     db.add(warning)
     await db.commit()
-    return {"id": warning.id, "reason": warning.reason}
+    await db.refresh(warning)
+    return {"id": warning.id, "reason": warning.reason, "created_at": warning.created_at.isoformat()}
+
+
+@router.put("/warnings/{warning_id}")
+async def update_warning(
+    warning_id: int,
+    body: CreateWarningRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
+    warning = result.scalar_one_or_none()
+    if not warning:
+        raise HTTPException(status_code=404, detail="Warning not found")
+
+    warning.reason = body.reason
+    await db.commit()
+    await db.refresh(warning)
+    return {"id": warning.id, "reason": warning.reason, "created_at": warning.created_at.isoformat()}
+
+
+@router.delete("/warnings/{warning_id}")
+async def delete_warning(
+    warning_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
+    warning = result.scalar_one_or_none()
+    if not warning:
+        raise HTTPException(status_code=404, detail="Warning not found")
+
+    await db.delete(warning)
+    await db.commit()
+    return {"message": "Warning deleted"}
 
 
 @router.post("/students/{student_id}/upload-pic")

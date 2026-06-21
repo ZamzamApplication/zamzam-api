@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Student, Sheikh
+from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus
 from app.routers.auth import get_current_user_depends
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -26,11 +26,12 @@ async def circle_attendance_rate(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
-    # Get all students belonging to this circle's sheikhs
+    from collections import Counter
+
     result = await db.execute(
         select(Student.id)
         .join(Sheikh)
-        .where(Sheikh.circle_id == circle_id)
+        .where(Sheikh.circle_id == circle_id, Student.status == StudentStatus.enrolled)
     )
     student_ids = [row[0] for row in result.all()]
 
@@ -45,49 +46,119 @@ async def circle_attendance_rate(
         }
 
     result = await db.execute(
-        select(func.count(Attendance.id))
-        .where(
-            Attendance.student_id.in_(student_ids),
-        )
-        .join(Session)
-        .where(Session.is_confirmed == True)
+        select(func.count(Session.id))
+        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
     )
-    total = result.scalar() or 0
+    total_sessions = result.scalar() or 0
 
     result = await db.execute(
-        select(func.count(Attendance.id))
-        .where(
-            Attendance.student_id.in_(student_ids),
-            Attendance.status == AttendanceStatus.present,
-        )
+        select(Attendance.student_id, Attendance.status)
+        .where(Attendance.student_id.in_(student_ids))
         .join(Session)
         .where(Session.is_confirmed == True)
     )
-    present = result.scalar() or 0
+    att_rows = result.all()
 
-    result = await db.execute(
-        select(func.count(Attendance.id))
-        .where(
-            Attendance.student_id.in_(student_ids),
-            Attendance.status == AttendanceStatus.excused,
-        )
-        .join(Session)
-        .where(Session.is_confirmed == True)
-    )
-    excused = result.scalar() or 0
+    student_attendance = {sid: Counter() for sid in student_ids}
+    for att in att_rows:
+        student_attendance[att.student_id][att.status] += 1
 
-    attended = present + excused
-    absent = total - attended
-    rate = round((attended / total * 100), 1) if total > 0 else 0
+    total_present = 0
+    total_excused = 0
+    total_absent = 0
+    total_not_applicable = 0
+
+    for sid in student_ids:
+        counts = student_attendance[sid]
+        present = counts.get(AttendanceStatus.present, 0)
+        excused = counts.get(AttendanceStatus.excused, 0)
+        absent_records = counts.get(AttendanceStatus.absent, 0)
+        not_applicable = counts.get(AttendanceStatus.not_applicable, 0)
+        total_records = present + excused + absent_records + not_applicable
+
+        no_record = total_sessions - total_records
+
+        total_present += present
+        total_excused += excused
+        total_absent += absent_records + no_record
+        total_not_applicable += not_applicable
+
+    total_applicable = total_present + total_excused + total_absent
+    attended = total_present + total_excused
+    rate = round((attended / total_applicable * 100), 1) if total_applicable > 0 else 0
 
     return {
         "circle_id": circle_id,
-        "total_attendance_records": total,
-        "present": present,
-        "absent": absent,
-        "excused": excused,
+        "total_attendance_records": total_applicable,
+        "present": total_present,
+        "absent": total_absent,
+        "excused": total_excused,
         "attendance_rate": rate,
     }
+
+
+@router.get("/circle/{circle_id}/student-stats")
+async def circle_student_stats(
+    circle_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user_depends),
+):
+    result = await db.execute(
+        select(Student.id, Student.name, Sheikh.name.label("sheikh_name"))
+        .join(Sheikh)
+        .where(Sheikh.circle_id == circle_id, Student.status == StudentStatus.enrolled)
+        .order_by(Sheikh.name, Student.sort_order)
+    )
+    rows = result.all()
+    student_ids = [r.id for r in rows]
+
+    result = await db.execute(
+        select(func.count(Session.id))
+        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+    )
+    total_sessions = result.scalar() or 0
+
+    result = await db.execute(
+        select(Attendance.student_id, Attendance.status)
+        .where(Attendance.student_id.in_(student_ids))
+        .join(Session)
+        .where(Session.is_confirmed == True)
+    )
+    att_rows = result.all()
+
+    from collections import Counter
+    student_attendance = {sid: Counter() for sid in student_ids}
+    for att in att_rows:
+        student_attendance[att.student_id][att.status] += 1
+
+    students_data = []
+    for row in rows:
+        counts = student_attendance[row.id]
+        present = counts.get(AttendanceStatus.present, 0)
+        excused = counts.get(AttendanceStatus.excused, 0)
+        absent_records = counts.get(AttendanceStatus.absent, 0)
+        not_applicable = counts.get(AttendanceStatus.not_applicable, 0)
+        total_records = present + excused + absent_records + not_applicable
+
+        no_record = total_sessions - total_records
+        absent = absent_records + no_record
+        total_applicable = total_sessions - not_applicable
+
+        rate = round((present + excused) / total_applicable * 100, 1) if total_applicable > 0 else 0
+
+        students_data.append({
+            "student_id": row.id,
+            "student_name": row.name,
+            "sheikh_name": row.sheikh_name,
+            "total_sessions": total_sessions,
+            "present": present,
+            "excused": excused,
+            "absent": absent,
+            "not_applicable": not_applicable,
+            "attendance_rate": rate,
+        })
+
+    return {"circle_id": circle_id, "students": students_data}
 
 
 @router.get("/student/{student_id}/streak")
@@ -109,7 +180,10 @@ async def student_streak(
 
     result = await db.execute(
         select(func.count(Attendance.id))
-        .where(Attendance.student_id == student_id)
+        .where(
+            Attendance.student_id == student_id,
+            Attendance.status != AttendanceStatus.not_applicable,
+        )
         .join(Session)
         .where(Session.is_confirmed == True)
     )
@@ -173,7 +247,7 @@ async def attendance_grid(
             select(Student)
             .where(
                 Student.sheikh_id == sheikh_id,
-                Student.is_enrolled == True,
+                Student.status == StudentStatus.enrolled,
             )
             .order_by(Student.sort_order)
         )

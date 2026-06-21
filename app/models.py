@@ -7,6 +7,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class StudentStatus(str, enum.Enum):
+    enrolled = "مقيد"
+    excluded = "مستبعد"
+    discontinued = "منقطع"
+    guest = "ضيف"
+    not_enrolled = "غير مقيد"
+
+
 class AttendanceStatus(str, enum.Enum):
     present = "حاضر"  # noqa: F821
     absent = "غياب"  # noqa: F821
@@ -72,7 +80,7 @@ class Student(Base):
     student_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_pic: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_enrolled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[StudentStatus] = mapped_column(Enum(StudentStatus), default=StudentStatus.enrolled, nullable=False)
     registration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

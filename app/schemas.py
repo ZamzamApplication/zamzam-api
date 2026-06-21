@@ -68,7 +68,7 @@ class StudentOut(BaseModel):
     student_id: str | None = None
     birthday: date | None = None
     profile_pic: str | None = None
-    is_enrolled: bool = True
+    status: str = "مقيد"
     registration_date: date | None = None
     warnings: list[WarningOut] = []
     parent_phones: list[ParentPhoneOut] = []
@@ -152,7 +152,7 @@ class CreateStudentRequest(BaseModel):
     phone: str | None = None
     student_id: str | None = None
     birthday: date | None = None
-    is_enrolled: bool = True
+    status: str = "مقيد"
     registration_date: date | None = None
     sheikh_id: int | None = None
     parent_phones: list[CreateParentPhone] = []
@@ -187,7 +187,7 @@ class UpdateStudentRequest(BaseModel):
     student_id: str | None = None
     birthday: date | None = None
     profile_pic: str | None = None
-    is_enrolled: bool | None = None
+    status: str | None = None
     registration_date: date | None = None
     sheikh_id: int | None = None
     parent_phones: list[UpdateParentPhone] | None = None

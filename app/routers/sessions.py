@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student
+from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus
 from app.routers.auth import get_current_user_depends
 from app.schemas import CreateSessionRequest, UpdateSessionRequest
 
@@ -153,7 +153,7 @@ async def get_session_attendance(
     for sheikh in circle_sheikhs:
         students_list = []
         for s in sheikh.students:
-            if not s.is_enrolled:
+            if s.status != StudentStatus.enrolled:
                 continue
             att_result = await db.execute(
                 select(Attendance).where(
@@ -162,9 +162,6 @@ async def get_session_attendance(
                 )
             )
             att = att_result.scalar_one_or_none()
-            # For confirmed sessions, only show students that have an attendance record
-            if session.is_confirmed and att is None:
-                continue
             # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
             default_sheikh_id = s.sheikh_id
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
@@ -204,6 +201,34 @@ async def confirm_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get all enrolled students in this circle
+    result = await db.execute(
+        select(Student.id)
+        .join(Sheikh)
+        .where(
+            Sheikh.circle_id == session.circle_id,
+            Student.status == StudentStatus.enrolled,
+        )
+    )
+    all_student_ids = {row[0] for row in result.all()}
+
+    # Get students who already have attendance records for this session
+    result = await db.execute(
+        select(Attendance.student_id).where(
+            Attendance.session_id == session_id,
+        )
+    )
+    with_records = {row[0] for row in result.all()}
+
+    # Create absent records for students without one
+    missing = all_student_ids - with_records
+    for sid in missing:
+        db.add(Attendance(
+            session_id=session_id,
+            student_id=sid,
+            status=AttendanceStatus.absent,
+        ))
 
     session.is_confirmed = True
     await db.commit()

@@ -179,6 +179,41 @@ async def migrate():
             """))
             await conn.execute(text("DROP TABLE student_sheikhs"))
 
+        # — Migrate is_enrolled → status on students —
+        result = await conn.execute(text("PRAGMA table_info(students)"))
+        student_columns = {row[1] for row in result.fetchall()}
+        if "is_enrolled" in student_columns and "status" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'مقيد'"))
+            await conn.execute(text("""
+                UPDATE students SET status = 'مقيد' WHERE is_enrolled = 1
+            """))
+            await conn.execute(text("""
+                UPDATE students SET status = 'غير مقيد' WHERE is_enrolled = 0
+            """))
+            await conn.execute(text("PRAGMA foreign_keys=OFF"))
+            # Recreate table without is_enrolled
+            await conn.execute(text("""
+                CREATE TABLE students_new (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    name VARCHAR(100) NOT NULL,
+                    phone VARCHAR(20),
+                    student_id VARCHAR(50),
+                    birthday DATE,
+                    profile_pic TEXT,
+                    status VARCHAR(20) NOT NULL DEFAULT 'مقيد',
+                    registration_date DATE,
+                    sheikh_id INTEGER REFERENCES sheikhs(id),
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                )
+            """))
+            await conn.execute(text("""
+                INSERT INTO students_new (id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, sort_order)
+                SELECT id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, sort_order FROM students
+            """))
+            await conn.execute(text("DROP TABLE students"))
+            await conn.execute(text("ALTER TABLE students_new RENAME TO students"))
+            await conn.execute(text("PRAGMA foreign_keys=ON"))
+
         # — Drop circle_schedules table if it exists —
         result = await conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='circle_schedules'"
