@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,8 @@ async def list_circles(
 @router.get("/circle/{circle_id}/rate")
 async def circle_attendance_rate(
     circle_id: int,
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
@@ -45,18 +49,29 @@ async def circle_attendance_rate(
             "attendance_rate": 0,
         }
 
-    result = await db.execute(
-        select(func.count(Session.id))
-        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+    session_query = select(func.count(Session.id)).where(
+        Session.circle_id == circle_id, Session.is_confirmed == True
     )
+    if date_from:
+        session_query = session_query.where(Session.date >= date_from)
+    if date_to:
+        session_query = session_query.where(Session.date <= date_to)
+
+    result = await db.execute(session_query)
     total_sessions = result.scalar() or 0
 
-    result = await db.execute(
+    att_query = (
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
         .where(Session.is_confirmed == True)
     )
+    if date_from:
+        att_query = att_query.where(Session.date >= date_from)
+    if date_to:
+        att_query = att_query.where(Session.date <= date_to)
+
+    result = await db.execute(att_query)
     att_rows = result.all()
 
     student_attendance = {sid: Counter() for sid in student_ids}
@@ -100,6 +115,8 @@ async def circle_attendance_rate(
 @router.get("/circle/{circle_id}/student-stats")
 async def circle_student_stats(
     circle_id: int,
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
@@ -112,18 +129,29 @@ async def circle_student_stats(
     rows = result.all()
     student_ids = [r.id for r in rows]
 
-    result = await db.execute(
-        select(func.count(Session.id))
-        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+    session_query = select(func.count(Session.id)).where(
+        Session.circle_id == circle_id, Session.is_confirmed == True
     )
+    if date_from:
+        session_query = session_query.where(Session.date >= date_from)
+    if date_to:
+        session_query = session_query.where(Session.date <= date_to)
+
+    result = await db.execute(session_query)
     total_sessions = result.scalar() or 0
 
-    result = await db.execute(
+    att_query = (
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
         .where(Session.is_confirmed == True)
     )
+    if date_from:
+        att_query = att_query.where(Session.date >= date_from)
+    if date_to:
+        att_query = att_query.where(Session.date <= date_to)
+
+    result = await db.execute(att_query)
     att_rows = result.all()
 
     from collections import Counter
