@@ -131,6 +131,7 @@ class CreateSessionRequest(BaseModel):
     circle_id: int
     session_date: date
     session_time: time | None = None
+    default_status: str = "غياب"
 
 
 class UpdateSessionRequest(BaseModel):

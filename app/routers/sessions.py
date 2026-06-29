@@ -93,12 +93,38 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ):
+    if body.default_status not in [s.value for s in AttendanceStatus]:
+        raise HTTPException(status_code=400, detail=f"Invalid default status")
+
     result = await db.execute(select(Circle).where(Circle.id == body.circle_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Circle not found")
 
     session = Session(date=body.session_date, circle_id=body.circle_id)
     db.add(session)
+    await db.flush()
+
+    result = await db.execute(
+        select(Student)
+        .join(Sheikh)
+        .where(
+            Sheikh.circle_id == body.circle_id,
+            Student.status == StudentStatus.enrolled,
+        )
+    )
+    students = result.scalars().all()
+    for s in students:
+        status = (
+            AttendanceStatus.not_applicable
+            if s.registration_date and s.registration_date > body.session_date
+            else AttendanceStatus(body.default_status)
+        )
+        db.add(Attendance(
+            session_id=session.id,
+            student_id=s.id,
+            status=status,
+        ))
+
     await db.commit()
     await db.refresh(session)
     return {"id": session.id, "date": session.date.isoformat(), "circle_id": session.circle_id}
