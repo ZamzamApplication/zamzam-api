@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.database import init_db
@@ -23,13 +23,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
-
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(attendance.router)
 app.include_router(reports.router)
 app.include_router(management.router)
+
+
+@app.get("/uploads/{filepath:path}")
+async def serve_upload(filepath: str):
+    file = UPLOAD_DIR / filepath
+    if not file.exists() or not file.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(str(file))
 
 
 @app.on_event("startup")
