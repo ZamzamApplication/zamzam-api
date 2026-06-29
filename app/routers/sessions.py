@@ -165,12 +165,16 @@ async def get_session_attendance(
             # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
             default_sheikh_id = s.sheikh_id
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
+            if att:
+                status = att.status.value
+            else:
+                status = "لا ينطبق" if s.registration_date and s.registration_date > session.date else "غياب"
             students_list.append({
                 "id": s.id,
                 "name": s.name,
                 "phone": s.phone,
                 "attendance_id": att.id if att else None,
-                "status": att.status.value if att else "غياب",
+                "status": status,
                 "notes": att.notes if att else None,
                 "sheikh_id": att_sheikh_id,
             })
@@ -204,14 +208,16 @@ async def confirm_session(
 
     # Get all enrolled students in this circle
     result = await db.execute(
-        select(Student.id)
+        select(Student)
         .join(Sheikh)
         .where(
             Sheikh.circle_id == session.circle_id,
             Student.status == StudentStatus.enrolled,
         )
     )
-    all_student_ids = {row[0] for row in result.all()}
+    all_students = result.scalars().all()
+    all_student_ids = {s.id for s in all_students}
+    student_map = {s.id: s for s in all_students}
 
     # Get students who already have attendance records for this session
     result = await db.execute(
@@ -221,13 +227,15 @@ async def confirm_session(
     )
     with_records = {row[0] for row in result.all()}
 
-    # Create absent records for students without one
+    # Create records for students without one
     missing = all_student_ids - with_records
     for sid in missing:
+        s = student_map.get(sid)
+        status = AttendanceStatus.not_applicable if s and s.registration_date and s.registration_date > session.date else AttendanceStatus.absent
         db.add(Attendance(
             session_id=session_id,
             student_id=sid,
-            status=AttendanceStatus.absent,
+            status=status,
         ))
 
     session.is_confirmed = True

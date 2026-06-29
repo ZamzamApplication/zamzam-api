@@ -287,7 +287,8 @@ async def attendance_grid(
             continue
         records: dict[str, str] = {}
         for sess in sessions:
-            records[str(sess.id)] = att_lookup.get((sid, sess.id), "غياب")
+            default_status = "لا ينطبق" if student.registration_date and student.registration_date > sess.date else "غياب"
+            records[str(sess.id)] = att_lookup.get((sid, sess.id), default_status)
         students_data.append({
             "id": sid,
             "name": student.name,
