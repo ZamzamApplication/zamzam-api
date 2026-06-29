@@ -580,7 +580,8 @@ async def export_db(
 ):
     from urllib.parse import urlparse
     parsed = urlparse(settings.DATABASE_URL)
-    db_path = os.path.abspath(parsed.path)
+    db_path = parsed.path[1:] if parsed.path.startswith("/") else parsed.path
+    db_path = os.path.abspath(db_path)
     if not os.path.isfile(db_path):
         raise HTTPException(status_code=404, detail=f"Database file not found at {db_path}")
     return FileResponse(
