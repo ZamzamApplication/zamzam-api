@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import uuid
 from datetime import date, datetime
@@ -6,6 +7,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -571,3 +573,20 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     return {"message": "تم حذف المستخدم"}
+
+
+@router.get("/export-db")
+async def export_db(
+    _=Depends(require_admin),
+):
+    match = re.match(r"sqlite\+aiosqlite:///(.+)", settings.DATABASE_URL)
+    if not match:
+        raise HTTPException(status_code=500, detail="Unsupported database URL")
+    db_path = match.group(1)
+    if not os.path.isfile(db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    return FileResponse(
+        db_path,
+        media_type="application/octet-stream",
+        filename="zamzam_backup.db",
+    )
