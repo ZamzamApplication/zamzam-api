@@ -34,7 +34,7 @@ from app.schemas import (
 
 router = APIRouter(tags=["management"])
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
