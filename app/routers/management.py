@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 import uuid
 from datetime import date, datetime
@@ -579,12 +578,11 @@ async def delete_user(
 async def export_db(
     _=Depends(require_admin),
 ):
-    match = re.match(r"sqlite\+aiosqlite:///(.+)", settings.DATABASE_URL)
-    if not match:
-        raise HTTPException(status_code=500, detail="Unsupported database URL")
-    db_path = match.group(1)
+    from urllib.parse import urlparse
+    parsed = urlparse(settings.DATABASE_URL)
+    db_path = os.path.abspath(parsed.path)
     if not os.path.isfile(db_path):
-        raise HTTPException(status_code=404, detail="Database file not found")
+        raise HTTPException(status_code=404, detail=f"Database file not found at {db_path}")
     return FileResponse(
         db_path,
         media_type="application/octet-stream",
