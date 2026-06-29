@@ -39,7 +39,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 def pic_url(path: str) -> str:
-    return f"{settings.API_BASE_URL}/uploads/{path}"
+    return f"/uploads/{path}"
 
 
 # ─── Sheikhs ─────────────────────────────────────────────────────────────────
