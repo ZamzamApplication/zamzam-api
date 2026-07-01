@@ -214,6 +214,28 @@ async def migrate():
             await conn.execute(text("ALTER TABLE students_new RENAME TO students"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
 
+        # — Add whatsapp_group_id to sheikhs —
+        result = await conn.execute(text("PRAGMA table_info(sheikhs)"))
+        sheikh_columns = {row[1] for row in result.fetchall()}
+        if "whatsapp_group_id" not in sheikh_columns:
+            await conn.execute(text("ALTER TABLE sheikhs ADD COLUMN whatsapp_group_id VARCHAR(255)"))
+
+        # — Add max_warnings to circles —
+        result = await conn.execute(text("PRAGMA table_info(circles)"))
+        circle_columns = {row[1] for row in result.fetchall()}
+        if "max_warnings" not in circle_columns:
+            await conn.execute(text("ALTER TABLE circles ADD COLUMN max_warnings INTEGER NOT NULL DEFAULT 3"))
+
+        # — Add warning_number, sent, sent_at to student_warnings —
+        result = await conn.execute(text("PRAGMA table_info(student_warnings)"))
+        warning_columns = {row[1] for row in result.fetchall()}
+        if "warning_number" not in warning_columns:
+            await conn.execute(text("ALTER TABLE student_warnings ADD COLUMN warning_number INTEGER NOT NULL DEFAULT 1"))
+        if "sent" not in warning_columns:
+            await conn.execute(text("ALTER TABLE student_warnings ADD COLUMN sent BOOLEAN NOT NULL DEFAULT 0"))
+        if "sent_at" not in warning_columns:
+            await conn.execute(text("ALTER TABLE student_warnings ADD COLUMN sent_at DATETIME"))
+
         # — Drop circle_schedules table if it exists —
         result = await conn.execute(text(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='circle_schedules'"
