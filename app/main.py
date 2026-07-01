@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.database import init_db
-from app.routers import auth, sessions, attendance, reports, management
+from app.routers import auth, sessions, attendance, reports, management, saved_filters
 from app.seed import seed_data
 
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
@@ -28,6 +28,7 @@ app.include_router(sessions.router)
 app.include_router(attendance.router)
 app.include_router(reports.router)
 app.include_router(management.router)
+app.include_router(saved_filters.router)
 
 
 @app.get("/uploads/{filepath:path}")

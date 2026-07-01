@@ -151,3 +151,13 @@ class Attendance(Base):
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")
     student: Mapped[Student] = relationship("Student", back_populates="attendance_records")
     session_sheikh: Mapped[Sheikh | None] = relationship("Sheikh")
+
+
+class SavedFilter(Base):
+    __tablename__ = "saved_filters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    data: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

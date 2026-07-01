@@ -200,6 +200,25 @@ class UpdateCircleRequest(BaseModel):
     description: str | None = None
 
 
+class SavedFilterOut(BaseModel):
+    id: int
+    name: str
+    data: str
+
+    class Config:
+        from_attributes = True
+
+
+class CreateSavedFilterRequest(BaseModel):
+    name: str
+    data: str
+
+
+class UpdateSavedFilterRequest(BaseModel):
+    name: str | None = None
+    data: str | None = None
+
+
 class UpdateExcusedWeekdaysRequest(BaseModel):
     weekdays: list[int]
 
