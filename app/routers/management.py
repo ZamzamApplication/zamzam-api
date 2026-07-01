@@ -25,6 +25,7 @@ from app.schemas import (
     CreateWarningRequest,
     MoveStudentRequest,
     ReorderStudentsRequest,
+    SendWarningsRequest,
     UpdateCircleRequest,
     UpdateExcusedWeekdaysRequest,
     UpdateParentPhone,
@@ -58,6 +59,7 @@ async def list_sheikhs(
             "id": s.id,
             "name": s.name,
             "phone": s.phone,
+            "whatsapp_group_id": s.whatsapp_group_id,
             "circle_id": s.circle_id,
             "circle_name": s.circle.name,
         }
@@ -71,10 +73,10 @@ async def create_sheikh(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ):
-    sheikh = Sheikh(name=body.name, phone=body.phone, circle_id=body.circle_id)
+    sheikh = Sheikh(name=body.name, phone=body.phone, whatsapp_group_id=body.whatsapp_group_id, circle_id=body.circle_id)
     db.add(sheikh)
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "circle_id": sheikh.circle_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "circle_id": sheikh.circle_id}
 
 
 @router.put("/sheikhs/{sheikh_id}")
@@ -92,10 +94,12 @@ async def update_sheikh(
         sheikh.name = body.name
     if body.phone is not None:
         sheikh.phone = body.phone
+    if body.whatsapp_group_id is not None:
+        sheikh.whatsapp_group_id = body.whatsapp_group_id
     if body.circle_id is not None:
         sheikh.circle_id = body.circle_id
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "circle_id": sheikh.circle_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "circle_id": sheikh.circle_id}
 
 
 @router.delete("/sheikhs/{sheikh_id}")
@@ -156,7 +160,7 @@ async def get_sheikh_students(
             "status": r.status.value,
             "registration_date": r.registration_date.isoformat() if r.registration_date else None,
             "warnings": [
-                {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+                {"id": w.id, "reason": w.reason, "warning_number": w.warning_number, "sent": w.sent, "sent_at": w.sent_at.isoformat() if w.sent_at else None, "created_at": w.created_at.isoformat()}
                 for w in r.warnings
             ],
             "parent_phones": [
@@ -228,7 +232,7 @@ async def list_students(
             "status": s.status.value,
             "registration_date": s.registration_date.isoformat() if s.registration_date else None,
             "warnings": [
-                {"id": w.id, "reason": w.reason, "created_at": w.created_at.isoformat()}
+                {"id": w.id, "reason": w.reason, "warning_number": w.warning_number, "sent": w.sent, "sent_at": w.sent_at.isoformat() if w.sent_at else None, "created_at": w.created_at.isoformat()}
                 for w in s.warnings
             ],
             "sheikh": {"id": s.sheikh.id, "name": s.sheikh.name} if s.sheikh else None,
@@ -393,11 +397,17 @@ async def add_warning(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Student not found")
 
-    warning = StudentWarning(student_id=student_id, reason=body.reason)
+    count_result = await db.execute(
+        select(StudentWarning).where(StudentWarning.student_id == student_id)
+    )
+    existing = count_result.scalars().all()
+    warning_number = len(existing) + 1
+
+    warning = StudentWarning(student_id=student_id, reason=body.reason, warning_number=warning_number)
     db.add(warning)
     await db.commit()
     await db.refresh(warning)
-    return {"id": warning.id, "reason": warning.reason, "created_at": warning.created_at.isoformat()}
+    return {"id": warning.id, "reason": warning.reason, "warning_number": warning.warning_number, "sent": warning.sent, "sent_at": warning.sent_at.isoformat() if warning.sent_at else None, "created_at": warning.created_at.isoformat()}
 
 
 @router.put("/warnings/{warning_id}")
@@ -415,7 +425,7 @@ async def update_warning(
     warning.reason = body.reason
     await db.commit()
     await db.refresh(warning)
-    return {"id": warning.id, "reason": warning.reason, "created_at": warning.created_at.isoformat()}
+    return {"id": warning.id, "reason": warning.reason, "warning_number": warning.warning_number, "sent": warning.sent, "sent_at": warning.sent_at.isoformat() if warning.sent_at else None, "created_at": warning.created_at.isoformat()}
 
 
 @router.delete("/warnings/{warning_id}")
@@ -432,6 +442,94 @@ async def delete_warning(
     await db.delete(warning)
     await db.commit()
     return {"message": "Warning deleted"}
+
+
+@router.get("/warnings")
+async def list_warnings(
+    sheikh_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    query = (
+        select(StudentWarning)
+        .options(selectinload(StudentWarning.student).selectinload(Student.sheikh))
+        .order_by(StudentWarning.created_at.desc())
+    )
+    if sheikh_id is not None:
+        query = query.where(StudentWarning.student.has(Student.sheikh_id == sheikh_id))
+    result = await db.execute(query)
+    warnings = result.scalars().all()
+    return [
+        {
+            "id": w.id,
+            "student_id": w.student_id,
+            "student_name": w.student.name,
+            "sheikh_id": w.student.sheikh.id if w.student.sheikh else None,
+            "sheikh_name": w.student.sheikh.name if w.student.sheikh else None,
+            "reason": w.reason,
+            "warning_number": w.warning_number,
+            "sent": w.sent,
+            "sent_at": w.sent_at.isoformat() if w.sent_at else None,
+            "created_at": w.created_at.isoformat(),
+        }
+        for w in warnings
+    ]
+
+
+@router.post("/warnings/send")
+async def send_warnings(
+    body: SendWarningsRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    results: list[dict] = []
+    for wid in body.warning_ids:
+        result = await db.execute(
+            select(StudentWarning)
+            .options(selectinload(StudentWarning.student).selectinload(Student.sheikh))
+            .where(StudentWarning.id == wid)
+        )
+        warning = result.scalar_one_or_none()
+        if not warning:
+            results.append({"warning_id": wid, "success": False, "error": "Warning not found"})
+            continue
+
+        student = warning.student
+        sheikh = student.sheikh
+        if not sheikh or not sheikh.whatsapp_group_id:
+            results.append({"warning_id": wid, "success": False, "error": "شيخ الطالب ليس لديه معرف مجموعة واتساب"})
+            continue
+
+        circle = await db.execute(select(Circle).where(Circle.id == sheikh.circle_id))
+        circle_obj = circle.scalar_one_or_none()
+        max_w = circle_obj.max_warnings if circle_obj else 3
+        remaining = max_w - warning.warning_number
+
+        message = (
+            f"انذار رقم {warning.warning_number} الى الطالب \"{student.name}\"\n"
+            f" بسبب غيابه بدون اعتذار عن حلقات:\n"
+            f"{warning.reason}\n\n"
+            f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    settings.WHATSEND_API_URL,
+                    headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+                    json={"groupid": sheikh.whatsapp_group_id, "message": message},
+                )
+                resp.raise_for_status()
+        except Exception as e:
+            results.append({"warning_id": wid, "success": False, "error": str(e)})
+            continue
+
+        warning.sent = True
+        warning.sent_at = datetime.utcnow()
+        await db.commit()
+        results.append({"warning_id": wid, "success": True})
+
+    return {"results": results}
 
 
 @router.get("/students/{student_id}/excused-weekdays")
@@ -498,7 +596,7 @@ async def list_circles(
 ):
     result = await db.execute(select(Circle))
     circles = result.scalars().all()
-    return [{"id": c.id, "name": c.name, "description": c.description} for c in circles]
+    return [{"id": c.id, "name": c.name, "description": c.description, "max_warnings": c.max_warnings} for c in circles]
 
 
 @router.post("/circles")
@@ -507,10 +605,10 @@ async def create_circle(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ):
-    circle = Circle(name=body.name, description=body.description)
+    circle = Circle(name=body.name, description=body.description, max_warnings=body.max_warnings)
     db.add(circle)
     await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description}
+    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings}
 
 
 @router.put("/circles/{circle_id}")
@@ -528,8 +626,10 @@ async def update_circle(
         circle.name = body.name
     if body.description is not None:
         circle.description = body.description
+    if body.max_warnings is not None:
+        circle.max_warnings = body.max_warnings
     await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description}
+    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings}
 
 
 @router.delete("/circles/{circle_id}")

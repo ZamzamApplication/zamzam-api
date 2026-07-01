@@ -53,6 +53,7 @@ class Circle(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    max_warnings: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle", cascade="all, delete-orphan")
@@ -64,6 +65,7 @@ class Sheikh(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    whatsapp_group_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
 
     circle: Mapped[Circle] = relationship("Circle", back_populates="sheikhs")
@@ -108,6 +110,9 @@ class StudentWarning(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    warning_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     student: Mapped[Student] = relationship("Student", back_populates="warnings")

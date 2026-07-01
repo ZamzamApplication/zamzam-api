@@ -38,6 +38,7 @@ class CircleOut(BaseModel):
     id: int
     name: str
     description: str | None = None
+    max_warnings: int = 3
 
     class Config:
         from_attributes = True
@@ -47,6 +48,7 @@ class SheikhOut(BaseModel):
     id: int
     name: str
     phone: str | None = None
+    whatsapp_group_id: str | None = None
 
     class Config:
         from_attributes = True
@@ -55,6 +57,9 @@ class SheikhOut(BaseModel):
 class WarningOut(BaseModel):
     id: int
     reason: str
+    warning_number: int
+    sent: bool = False
+    sent_at: datetime | None = None
     created_at: datetime
 
     class Config:
@@ -146,6 +151,7 @@ class ConfirmSessionRequest(BaseModel):
 class CreateSheikhRequest(BaseModel):
     name: str
     phone: str | None = None
+    whatsapp_group_id: str | None = None
     circle_id: int | None = None
 
 
@@ -175,11 +181,13 @@ class ReorderStudentsRequest(BaseModel):
 class CreateCircleRequest(BaseModel):
     name: str
     description: str | None = None
+    max_warnings: int = 3
 
 
 class UpdateSheikhRequest(BaseModel):
     name: str | None = None
     phone: str | None = None
+    whatsapp_group_id: str | None = None
     circle_id: int | None = None
 
 
@@ -198,6 +206,7 @@ class UpdateStudentRequest(BaseModel):
 class UpdateCircleRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    max_warnings: int | None = None
 
 
 class SavedFilterOut(BaseModel):
@@ -221,6 +230,10 @@ class UpdateSavedFilterRequest(BaseModel):
 
 class UpdateExcusedWeekdaysRequest(BaseModel):
     weekdays: list[int]
+
+
+class SendWarningsRequest(BaseModel):
+    warning_ids: list[int]
 
 
 class CreateUserRequest(BaseModel):
