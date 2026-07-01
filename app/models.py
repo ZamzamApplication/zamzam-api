@@ -71,6 +71,16 @@ class Sheikh(Base):
     user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
 
 
+class ExcusedWeekday(Base):
+    __tablename__ = "excused_weekdays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    student: Mapped["Student"] = relationship("Student", back_populates="excused_weekdays")
+
+
 class Student(Base):
     __tablename__ = "students"
 
@@ -89,6 +99,7 @@ class Student(Base):
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
     parent_phones: Mapped[list["ParentPhone"]] = relationship("ParentPhone", back_populates="student", cascade="all, delete-orphan")
     warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
+    excused_weekdays: Mapped[list["ExcusedWeekday"]] = relationship("ExcusedWeekday", back_populates="student", cascade="all, delete-orphan")
 
 
 class StudentWarning(Base):

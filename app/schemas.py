@@ -72,6 +72,7 @@ class StudentOut(BaseModel):
     registration_date: date | None = None
     warnings: list[WarningOut] = []
     parent_phones: list[ParentPhoneOut] = []
+    excused_weekdays: list[int] = []
 
     class Config:
         from_attributes = True
@@ -197,6 +198,10 @@ class UpdateStudentRequest(BaseModel):
 class UpdateCircleRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+
+
+class UpdateExcusedWeekdaysRequest(BaseModel):
+    weekdays: list[int]
 
 
 class CreateUserRequest(BaseModel):

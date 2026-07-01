@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus
+from app.models import Attendance, AttendanceStatus, Circle, ExcusedWeekday, Session, Sheikh, Student, StudentStatus
 from app.routers.auth import get_current_user_depends, require_admin
 from app.schemas import CreateSessionRequest, UpdateSessionRequest
 
@@ -113,12 +113,27 @@ async def create_session(
         )
     )
     students = result.scalars().all()
+
+    session_weekday = body.session_date.weekday()  # 0=Mon ... 6=Sun
+    # Python weekday(): Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    # We use: 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
+    # Convert: (wd + 1) % 7
+    weekday_local = (session_weekday + 1) % 7
+
     for s in students:
-        status = (
-            AttendanceStatus.not_applicable
-            if s.registration_date and s.registration_date > body.session_date
-            else AttendanceStatus(body.default_status)
-        )
+        if s.registration_date and s.registration_date > body.session_date:
+            status = AttendanceStatus.not_applicable
+        else:
+            result = await db.execute(
+                select(ExcusedWeekday).where(
+                    ExcusedWeekday.student_id == s.id,
+                    ExcusedWeekday.weekday == weekday_local,
+                )
+            )
+            if result.scalar_one_or_none():
+                status = AttendanceStatus.excused
+            else:
+                status = AttendanceStatus(body.default_status)
         db.add(Attendance(
             session_id=session.id,
             student_id=s.id,
@@ -254,10 +269,25 @@ async def confirm_session(
     with_records = {row[0] for row in result.all()}
 
     # Create records for students without one
+    session_weekday = session.date.weekday()
+    weekday_local = (session_weekday + 1) % 7
+
     missing = all_student_ids - with_records
     for sid in missing:
         s = student_map.get(sid)
-        status = AttendanceStatus.not_applicable if s and s.registration_date and s.registration_date > session.date else AttendanceStatus.absent
+        if s and s.registration_date and s.registration_date > session.date:
+            status = AttendanceStatus.not_applicable
+        else:
+            result = await db.execute(
+                select(ExcusedWeekday).where(
+                    ExcusedWeekday.student_id == sid,
+                    ExcusedWeekday.weekday == weekday_local,
+                )
+            )
+            if s and result.scalar_one_or_none():
+                status = AttendanceStatus.excused
+            else:
+                status = AttendanceStatus.absent
         db.add(Attendance(
             session_id=session_id,
             student_id=sid,

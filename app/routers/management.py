@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 
-from app.models import Attendance, Circle, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, User, UserRole
+from app.models import Attendance, Circle, ExcusedWeekday, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, User, UserRole
 from app.routers.auth import pwd_context, require_admin
 from app.schemas import (
     CreateCircleRequest,
@@ -26,6 +26,7 @@ from app.schemas import (
     MoveStudentRequest,
     ReorderStudentsRequest,
     UpdateCircleRequest,
+    UpdateExcusedWeekdaysRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,
     UpdateStudentRequest,
@@ -134,6 +135,16 @@ async def get_sheikh_students(
         .order_by(Student.sort_order)
     )
     records = result.scalars().all()
+
+    # Batch-load excused weekdays for all students
+    student_ids = [r.id for r in records]
+    ew_result = await db.execute(
+        select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids))
+    )
+    ew_map: dict[int, list[int]] = {}
+    for ew in ew_result.scalars().all():
+        ew_map.setdefault(ew.student_id, []).append(ew.weekday)
+
     return [
         {
             "id": r.id,
@@ -152,6 +163,7 @@ async def get_sheikh_students(
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value, "name": p.name}
                 for p in r.parent_phones
             ],
+            "excused_weekdays": ew_map.get(r.id, []),
         }
         for r in records
     ]
@@ -196,6 +208,15 @@ async def list_students(
         .order_by(Student.name)
     )
     students = result.scalars().all()
+
+    student_ids = [s.id for s in students]
+    ew_result = await db.execute(
+        select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids))
+    )
+    ew_map: dict[int, list[int]] = {}
+    for ew in ew_result.scalars().all():
+        ew_map.setdefault(ew.student_id, []).append(ew.weekday)
+
     return [
         {
             "id": s.id,
@@ -215,6 +236,7 @@ async def list_students(
                 {"id": p.id, "phone_number": p.phone_number, "parent_type": p.parent_type.value, "name": p.name}
                 for p in s.parent_phones
             ],
+            "excused_weekdays": ew_map.get(s.id, []),
         }
         for s in students
     ]
@@ -410,6 +432,36 @@ async def delete_warning(
     await db.delete(warning)
     await db.commit()
     return {"message": "Warning deleted"}
+
+
+@router.get("/students/{student_id}/excused-weekdays")
+async def get_excused_weekdays(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    result = await db.execute(
+        select(ExcusedWeekday).where(ExcusedWeekday.student_id == student_id)
+    )
+    return [{"id": e.id, "weekday": e.weekday} for e in result.scalars().all()]
+
+
+@router.put("/students/{student_id}/excused-weekdays")
+async def update_excused_weekdays(
+    student_id: int,
+    body: UpdateExcusedWeekdaysRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    await db.execute(sa_delete(ExcusedWeekday).where(ExcusedWeekday.student_id == student_id))
+    for wd in body.weekdays:
+        db.add(ExcusedWeekday(student_id=student_id, weekday=wd))
+    await db.commit()
+    return {"weekdays": body.weekdays}
 
 
 @router.post("/students/{student_id}/upload-pic")
