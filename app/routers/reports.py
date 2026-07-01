@@ -256,6 +256,7 @@ async def attendance_grid(
     sheikh_id: int | None = Query(default=None),
     circle_id: int | None = Query(default=None),
     limit: int | None = Query(default=None),
+    session_ids: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user_depends),
 ):
@@ -263,6 +264,10 @@ async def attendance_grid(
     query = select(Session).where(Session.is_confirmed == True)
     if circle_id:
         query = query.where(Session.circle_id == circle_id)
+    if session_ids:
+        parsed_ids = [int(s) for s in session_ids.split(",") if s.strip()]
+        if parsed_ids:
+            query = query.where(Session.id.in_(parsed_ids))
     query = query.order_by(Session.date.desc())
     if limit:
         query = query.limit(limit)
