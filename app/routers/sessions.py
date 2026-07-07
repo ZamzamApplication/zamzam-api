@@ -214,6 +214,7 @@ async def get_session_attendance(
                 "id": s.id,
                 "name": s.name,
                 "phone": s.phone,
+                "profile_pic": s.profile_pic,
                 "attendance_id": att.id if att else None,
                 "status": status,
                 "notes": att.notes if att else None,
