@@ -131,7 +131,7 @@ async def create_session(
                 )
             )
             if result.scalar_one_or_none():
-                status = AttendanceStatus.excused
+                status = AttendanceStatus.not_applicable
             else:
                 status = AttendanceStatus(body.default_status)
         db.add(Attendance(
@@ -285,7 +285,7 @@ async def confirm_session(
                 )
             )
             if s and result.scalar_one_or_none():
-                status = AttendanceStatus.excused
+                status = AttendanceStatus.not_applicable
             else:
                 status = AttendanceStatus.absent
         db.add(Attendance(
