@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     BACKUP_DIR: str = "./backups"
 
     WHATSEND_API_URL: str = "http://localhost:8000/api/send"
+    WHATSEND_API_GROUPS_URL: str = ""
     WHATSEND_API_KEY: str = ""
 
     class Config:

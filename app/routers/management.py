@@ -55,7 +55,41 @@ def build_warning_message(student_name: str, warning_number: int, reason: str, r
     )
 
 
+@router.get("/whatsend/groups")
+async def list_whatsend_groups(_=Depends(require_admin)):
+    try:
+        return {"groups": await fetch_whatsend_groups()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"فشل تحميل مجموعات واتساب: {whatsend_error(e)}")
+
+
+def whatsend_groups_url() -> str:
+    if settings.WHATSEND_API_GROUPS_URL:
+        return settings.WHATSEND_API_GROUPS_URL
+    return settings.WHATSEND_API_URL.rsplit("/", 1)[0] + "/groups"
+
+
+def whatsend_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        detail = data.get("detail") or data.get("message") or data.get("error") if isinstance(data, dict) else None
+        if not detail:
+            detail = response.text[:500] or response.reason_phrase
+        return str(detail)
+    if isinstance(exc, httpx.TimeoutException):
+        return "انتهت مهلة الاتصال بخدمة واتساب"
+    if isinstance(exc, httpx.RequestError):
+        return f"تعذر الاتصال بخدمة واتساب: {exc}"
+    return str(exc)
+
+
 async def send_whatsend_group_message(group_id: str, message: str) -> None:
+    if not settings.WHATSEND_API_KEY:
+        raise RuntimeError("مفتاح WhatSend API غير مضبوط")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             settings.WHATSEND_API_URL,
@@ -63,6 +97,24 @@ async def send_whatsend_group_message(group_id: str, message: str) -> None:
             json={"group_id": group_id, "message": message},
         )
         resp.raise_for_status()
+
+
+async def fetch_whatsend_groups() -> list[dict]:
+    if not settings.WHATSEND_API_KEY:
+        raise RuntimeError("مفتاح WhatSend API غير مضبوط")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            whatsend_groups_url(),
+            headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+        )
+        resp.raise_for_status()
+    data = resp.json()
+    groups = data.get("groups", [])
+    return [
+        {"id": group.get("id"), "name": group.get("name") or group.get("id")}
+        for group in groups
+        if group.get("id")
+    ]
 
 
 def pic_url(path: str) -> str:
@@ -531,7 +583,7 @@ async def add_and_send_warning(
         await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=502, detail=f"فشل إرسال الإنذار: {e}")
+        raise HTTPException(status_code=502, detail=f"فشل إرسال الإنذار: {whatsend_error(e)}")
 
     warning.sent = True
     warning.sent_at = datetime.utcnow()
@@ -648,7 +700,7 @@ async def send_warnings(
         try:
             await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
         except Exception as e:
-            results.append({"warning_id": wid, "success": False, "error": str(e)})
+            results.append({"warning_id": wid, "success": False, "error": whatsend_error(e)})
             continue
 
         warning.sent = True
