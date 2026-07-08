@@ -121,7 +121,7 @@ async def circle_student_stats(
     current_user=Depends(get_current_user_depends),
 ):
     result = await db.execute(
-        select(Student.id, Student.name, Sheikh.name.label("sheikh_name"))
+        select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
         .where(Sheikh.circle_id == circle_id, Student.status == StudentStatus.enrolled)
         .order_by(Sheikh.name, Student.sort_order)
@@ -177,6 +177,7 @@ async def circle_student_stats(
         students_data.append({
             "student_id": row.id,
             "student_name": row.name,
+            "profile_pic": row.profile_pic,
             "sheikh_name": row.sheikh_name,
             "total_sessions": total_sessions,
             "present": present,
@@ -325,6 +326,7 @@ async def attendance_grid(
         students_data.append({
             "id": sid,
             "name": student.name,
+            "profile_pic": student.profile_pic,
             "sheikh_id": student.sheikh_id,
             "records": records,
         })
