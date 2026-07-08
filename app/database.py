@@ -92,6 +92,12 @@ async def migrate():
         if "notes" not in att_columns:
             await conn.execute(text("ALTER TABLE attendance ADD COLUMN notes TEXT"))
 
+        # — Add notes to excused weekdays —
+        result = await conn.execute(text("PRAGMA table_info(excused_weekdays)"))
+        excused_weekday_columns = {row[1] for row in result.fetchall()}
+        if excused_weekday_columns and "note" not in excused_weekday_columns:
+            await conn.execute(text("ALTER TABLE excused_weekdays ADD COLUMN note TEXT"))
+
         # — Make attendance.student_id nullable —
         result = await conn.execute(text("PRAGMA table_info(attendance)"))
         att_columns = {row[1]: row for row in result.fetchall()}

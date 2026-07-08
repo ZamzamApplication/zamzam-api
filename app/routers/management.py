@@ -217,9 +217,9 @@ async def get_sheikh_students(
     ew_result = await db.execute(
         select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids))
     )
-    ew_map: dict[int, list[int]] = {}
+    ew_map: dict[int, list[dict[str, int | str | None]]] = {}
     for ew in ew_result.scalars().all():
-        ew_map.setdefault(ew.student_id, []).append(ew.weekday)
+        ew_map.setdefault(ew.student_id, []).append({"id": ew.id, "weekday": ew.weekday, "note": ew.note})
 
     return [
         {
@@ -289,9 +289,9 @@ async def list_students(
     ew_result = await db.execute(
         select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids))
     )
-    ew_map: dict[int, list[int]] = {}
+    ew_map: dict[int, list[dict[str, int | str | None]]] = {}
     for ew in ew_result.scalars().all():
-        ew_map.setdefault(ew.student_id, []).append(ew.weekday)
+        ew_map.setdefault(ew.student_id, []).append({"id": ew.id, "weekday": ew.weekday, "note": ew.note})
 
     return [
         {
@@ -668,7 +668,7 @@ async def get_excused_weekdays(
     result = await db.execute(
         select(ExcusedWeekday).where(ExcusedWeekday.student_id == student_id)
     )
-    return [{"id": e.id, "weekday": e.weekday} for e in result.scalars().all()]
+    return [{"id": e.id, "weekday": e.weekday, "note": e.note} for e in result.scalars().all()]
 
 
 @router.put("/students/{student_id}/excused-weekdays")
@@ -683,10 +683,15 @@ async def update_excused_weekdays(
         raise HTTPException(status_code=404, detail="Student not found")
 
     await db.execute(sa_delete(ExcusedWeekday).where(ExcusedWeekday.student_id == student_id))
-    for wd in body.weekdays:
-        db.add(ExcusedWeekday(student_id=student_id, weekday=wd))
+    saved = []
+    for item in body.weekdays:
+        weekday = item if isinstance(item, int) else item.weekday
+        note = None if isinstance(item, int) else item.note
+        clean_note = note.strip() if note else None
+        db.add(ExcusedWeekday(student_id=student_id, weekday=weekday, note=clean_note))
+        saved.append({"weekday": weekday, "note": clean_note})
     await db.commit()
-    return {"weekdays": body.weekdays}
+    return {"weekdays": saved}
 
 
 @router.post("/students/{student_id}/upload-pic")

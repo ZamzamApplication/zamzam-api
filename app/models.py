@@ -79,6 +79,7 @@ class ExcusedWeekday(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
     weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     student: Mapped["Student"] = relationship("Student", back_populates="excused_weekdays")
 

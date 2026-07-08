@@ -66,6 +66,15 @@ class WarningOut(BaseModel):
         from_attributes = True
 
 
+class ExcusedWeekdayOut(BaseModel):
+    id: int | None = None
+    weekday: int
+    note: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class StudentOut(BaseModel):
     id: int
     name: str
@@ -77,7 +86,7 @@ class StudentOut(BaseModel):
     registration_date: date | None = None
     warnings: list[WarningOut] = []
     parent_phones: list[ParentPhoneOut] = []
-    excused_weekdays: list[int] = []
+    excused_weekdays: list[ExcusedWeekdayOut] = []
 
     class Config:
         from_attributes = True
@@ -228,8 +237,13 @@ class UpdateSavedFilterRequest(BaseModel):
     data: str | None = None
 
 
+class UpdateExcusedWeekday(BaseModel):
+    weekday: int
+    note: str | None = None
+
+
 class UpdateExcusedWeekdaysRequest(BaseModel):
-    weekdays: list[int]
+    weekdays: list[UpdateExcusedWeekday | int]
 
 
 class SendWarningsRequest(BaseModel):
@@ -262,6 +276,4 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-
 

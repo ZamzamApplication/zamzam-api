@@ -121,6 +121,7 @@ async def create_session(
     weekday_local = (session_weekday + 1) % 7
 
     for s in students:
+        notes = None
         if s.registration_date and s.registration_date > body.session_date:
             status = AttendanceStatus.not_applicable
         else:
@@ -130,14 +131,17 @@ async def create_session(
                     ExcusedWeekday.weekday == weekday_local,
                 )
             )
-            if result.scalar_one_or_none():
+            excused_weekday = result.scalar_one_or_none()
+            if excused_weekday:
                 status = AttendanceStatus.not_applicable
+                notes = excused_weekday.note
             else:
                 status = AttendanceStatus(body.default_status)
         db.add(Attendance(
             session_id=session.id,
             student_id=s.id,
             status=status,
+            notes=notes,
         ))
 
     await db.commit()
@@ -191,11 +195,21 @@ async def get_session_attendance(
     ]
 
     sheikh_groups = []
+    session_weekday = session.date.weekday()
+    weekday_local = (session_weekday + 1) % 7
     for sheikh in circle_sheikhs:
         students_list = []
         for s in sheikh.students:
             if s.status != StudentStatus.enrolled:
                 continue
+            excused_result = await db.execute(
+                select(ExcusedWeekday).where(
+                    ExcusedWeekday.student_id == s.id,
+                    ExcusedWeekday.weekday == weekday_local,
+                )
+            )
+            excused_weekday = excused_result.scalar_one_or_none()
+            excused_note = excused_weekday.note if excused_weekday else None
             att_result = await db.execute(
                 select(Attendance).where(
                     Attendance.session_id == session_id,
@@ -208,8 +222,17 @@ async def get_session_attendance(
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
             if att:
                 status = att.status.value
+                notes = att.notes if att.notes is not None else (excused_note if status == AttendanceStatus.not_applicable.value else None)
             else:
-                status = "لا ينطبق" if s.registration_date and s.registration_date > session.date else "غياب"
+                if s.registration_date and s.registration_date > session.date:
+                    status = "لا ينطبق"
+                    notes = None
+                elif excused_weekday:
+                    status = "لا ينطبق"
+                    notes = excused_note
+                else:
+                    status = "غياب"
+                    notes = None
             students_list.append({
                 "id": s.id,
                 "name": s.name,
@@ -217,7 +240,7 @@ async def get_session_attendance(
                 "profile_pic": s.profile_pic,
                 "attendance_id": att.id if att else None,
                 "status": status,
-                "notes": att.notes if att else None,
+                "notes": notes,
                 "sheikh_id": att_sheikh_id,
             })
 
@@ -276,6 +299,7 @@ async def confirm_session(
     missing = all_student_ids - with_records
     for sid in missing:
         s = student_map.get(sid)
+        notes = None
         if s and s.registration_date and s.registration_date > session.date:
             status = AttendanceStatus.not_applicable
         else:
@@ -285,14 +309,17 @@ async def confirm_session(
                     ExcusedWeekday.weekday == weekday_local,
                 )
             )
-            if s and result.scalar_one_or_none():
+            excused_weekday = result.scalar_one_or_none()
+            if s and excused_weekday:
                 status = AttendanceStatus.not_applicable
+                notes = excused_weekday.note
             else:
                 status = AttendanceStatus.absent
         db.add(Attendance(
             session_id=session_id,
             student_id=sid,
             status=status,
+            notes=notes,
         ))
 
     session.is_confirmed = True
