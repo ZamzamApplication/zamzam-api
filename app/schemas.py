@@ -236,6 +236,10 @@ class SendWarningsRequest(BaseModel):
     warning_ids: list[int]
 
 
+class SendStudentWarningRequest(BaseModel):
+    absent_dates: list[str]
+
+
 class CreateUserRequest(BaseModel):
     username: str
     password: str
@@ -258,7 +262,6 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 
 

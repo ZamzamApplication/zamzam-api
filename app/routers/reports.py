@@ -325,6 +325,7 @@ async def attendance_grid(
         students_data.append({
             "id": sid,
             "name": student.name,
+            "sheikh_id": student.sheikh_id,
             "records": records,
         })
 

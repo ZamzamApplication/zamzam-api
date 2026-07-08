@@ -27,6 +27,7 @@ from app.schemas import (
     CreateWarningRequest,
     MoveStudentRequest,
     ReorderStudentsRequest,
+    SendStudentWarningRequest,
     SendWarningsRequest,
     UpdateCircleRequest,
     UpdateExcusedWeekdaysRequest,
@@ -43,6 +44,25 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_PROFILE_UPLOAD_BYTES = 10 * 1024 * 1024
 PROFILE_IMAGE_SIZE = (512, 512)
 PROFILE_IMAGE_QUALITY = 82
+
+
+def build_warning_message(student_name: str, warning_number: int, reason: str, remaining: int) -> str:
+    return (
+        f"انذار رقم {warning_number} الى الطالب \"{student_name}\"\n"
+        f" بسبب غيابه بدون اعتذار عن حلقات:\n"
+        f"{reason}\n\n"
+        f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}"
+    )
+
+
+async def send_whatsend_group_message(group_id: str, message: str) -> None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            settings.WHATSEND_API_URL,
+            headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+            json={"group_id": group_id, "message": message},
+        )
+        resp.raise_for_status()
 
 
 def pic_url(path: str) -> str:
@@ -462,6 +482,72 @@ async def add_warning(
     return {"id": warning.id, "reason": warning.reason, "warning_number": warning.warning_number, "sent": warning.sent, "sent_at": warning.sent_at.isoformat() if warning.sent_at else None, "created_at": warning.created_at.isoformat()}
 
 
+@router.post("/students/{student_id}/warnings/send")
+async def add_and_send_warning(
+    student_id: int,
+    body: SendStudentWarningRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    absent_dates = [d.strip() for d in body.absent_dates if d.strip()]
+    if not absent_dates:
+        raise HTTPException(status_code=400, detail="اختر حلقة واحدة على الأقل")
+
+    result = await db.execute(
+        select(Student)
+        .options(selectinload(Student.sheikh))
+        .where(Student.id == student_id)
+    )
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    sheikh = student.sheikh
+    if not sheikh:
+        raise HTTPException(status_code=400, detail="الطالب غير مرتبط بشيخ")
+    if not sheikh.whatsapp_group_id:
+        raise HTTPException(status_code=400, detail="شيخ الطالب ليس لديه معرف مجموعة واتساب")
+
+    count_result = await db.execute(
+        select(StudentWarning).where(StudentWarning.student_id == student_id)
+    )
+    warning_number = len(count_result.scalars().all()) + 1
+
+    circle_result = await db.execute(select(Circle).where(Circle.id == sheikh.circle_id))
+    circle = circle_result.scalar_one_or_none()
+    max_warnings = circle.max_warnings if circle else 3
+    remaining = max(max_warnings - warning_number, 0)
+    reason = "\n".join(f"* {d}" for d in absent_dates)
+    message = build_warning_message(student.name, warning_number, reason, remaining)
+
+    warning = StudentWarning(
+        student_id=student_id,
+        reason=reason,
+        warning_number=warning_number,
+    )
+    db.add(warning)
+
+    try:
+        await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=f"فشل إرسال الإنذار: {e}")
+
+    warning.sent = True
+    warning.sent_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(warning)
+    return {
+        "id": warning.id,
+        "reason": warning.reason,
+        "warning_number": warning.warning_number,
+        "sent": warning.sent,
+        "sent_at": warning.sent_at.isoformat() if warning.sent_at else None,
+        "created_at": warning.created_at.isoformat(),
+        "message": message,
+    }
+
+
 @router.put("/warnings/{warning_id}")
 async def update_warning(
     warning_id: int,
@@ -557,21 +643,10 @@ async def send_warnings(
         max_w = circle_obj.max_warnings if circle_obj else 3
         remaining = max_w - warning.warning_number
 
-        message = (
-            f"انذار رقم {warning.warning_number} الى الطالب \"{student.name}\"\n"
-            f" بسبب غيابه بدون اعتذار عن حلقات:\n"
-            f"{warning.reason}\n\n"
-            f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}"
-        )
+        message = build_warning_message(student.name, warning.warning_number, warning.reason, remaining)
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    settings.WHATSEND_API_URL,
-                    headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
-                    json={"groupid": sheikh.whatsapp_group_id, "message": message},
-                )
-                resp.raise_for_status()
+            await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
         except Exception as e:
             results.append({"warning_id": wid, "success": False, "error": str(e)})
             continue
