@@ -2,11 +2,13 @@ import os
 import shutil
 import uuid
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import delete as sa_delete, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -38,10 +40,60 @@ router = APIRouter(tags=["management"])
 
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(exist_ok=True)
+MAX_PROFILE_UPLOAD_BYTES = 10 * 1024 * 1024
+PROFILE_IMAGE_SIZE = (512, 512)
+PROFILE_IMAGE_QUALITY = 82
 
 
 def pic_url(path: str) -> str:
     return f"/uploads/{path}"
+
+
+def local_upload_name(path: str | None) -> str | None:
+    if not path or path.startswith(("http://", "https://")):
+        return None
+    if path.startswith("/uploads/"):
+        return path.removeprefix("/uploads/")
+    if path.startswith("uploads/"):
+        return path.removeprefix("uploads/")
+    return path
+
+
+def delete_upload(path: str | None) -> None:
+    name = local_upload_name(path)
+    if not name:
+        return
+    target = (UPLOAD_DIR / name).resolve()
+    upload_root = UPLOAD_DIR.resolve()
+    if upload_root not in target.parents or not target.is_file():
+        return
+    target.unlink(missing_ok=True)
+
+
+def compress_profile_image(content: bytes) -> bytes:
+    if len(content) > MAX_PROFILE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image is too large. Maximum size is 10MB.")
+
+    try:
+        with Image.open(BytesIO(content)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail(PROFILE_IMAGE_SIZE, Image.Resampling.LANCZOS)
+
+            if image.mode not in ("RGB", "L"):
+                background = Image.new("RGB", image.size, "white")
+                if "A" in image.getbands():
+                    background.paste(image, mask=image.getchannel("A"))
+                else:
+                    background.paste(image)
+                image = background
+            elif image.mode != "RGB":
+                image = image.convert("RGB")
+
+            output = BytesIO()
+            image.save(output, format="WEBP", quality=PROFILE_IMAGE_QUALITY, method=6)
+            return output.getvalue()
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.")
 
 
 # ─── Sheikhs ─────────────────────────────────────────────────────────────────
@@ -574,13 +626,17 @@ async def upload_student_pic(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    ext = Path(file.filename or "image.jpg").suffix
-    filename = f"{uuid.uuid4()}{ext}"
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
+
+    content = await file.read()
+    compressed = compress_profile_image(content)
+    filename = f"{uuid.uuid4()}.webp"
     filepath = UPLOAD_DIR / filename
     with open(filepath, "wb") as f:
-        content = await file.read()
-        f.write(content)
+        f.write(compressed)
 
+    delete_upload(student.profile_pic)
     student.profile_pic = filename
     await db.commit()
     return {"url": pic_url(filename)}
