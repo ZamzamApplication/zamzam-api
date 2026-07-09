@@ -49,22 +49,11 @@ async def circle_attendance_rate(
             "attendance_rate": 0,
         }
 
-    session_query = select(func.count(Session.id)).where(
-        Session.circle_id == circle_id, Session.is_confirmed == True
-    )
-    if date_from:
-        session_query = session_query.where(Session.date >= date_from)
-    if date_to:
-        session_query = session_query.where(Session.date <= date_to)
-
-    result = await db.execute(session_query)
-    total_sessions = result.scalar() or 0
-
     att_query = (
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
     )
     if date_from:
         att_query = att_query.where(Session.date >= date_from)
@@ -81,22 +70,15 @@ async def circle_attendance_rate(
     total_present = 0
     total_excused = 0
     total_absent = 0
-    total_not_applicable = 0
 
     for sid in student_ids:
         counts = student_attendance[sid]
         present = counts.get(AttendanceStatus.present, 0)
         excused = counts.get(AttendanceStatus.excused, 0)
         absent_records = counts.get(AttendanceStatus.absent, 0)
-        not_applicable = counts.get(AttendanceStatus.not_applicable, 0)
-        total_records = present + excused + absent_records + not_applicable
-
-        no_record = total_sessions - total_records
-
         total_present += present
         total_excused += excused
-        total_absent += absent_records + no_record
-        total_not_applicable += not_applicable
+        total_absent += absent_records
 
     total_applicable = total_present + total_excused + total_absent
     attended = total_present + total_excused
@@ -129,22 +111,11 @@ async def circle_student_stats(
     rows = result.all()
     student_ids = [r.id for r in rows]
 
-    session_query = select(func.count(Session.id)).where(
-        Session.circle_id == circle_id, Session.is_confirmed == True
-    )
-    if date_from:
-        session_query = session_query.where(Session.date >= date_from)
-    if date_to:
-        session_query = session_query.where(Session.date <= date_to)
-
-    result = await db.execute(session_query)
-    total_sessions = result.scalar() or 0
-
     att_query = (
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
     )
     if date_from:
         att_query = att_query.where(Session.date >= date_from)
@@ -168,9 +139,8 @@ async def circle_student_stats(
         not_applicable = counts.get(AttendanceStatus.not_applicable, 0)
         total_records = present + excused + absent_records + not_applicable
 
-        no_record = total_sessions - total_records
-        absent = absent_records + no_record
-        total_applicable = total_sessions - not_applicable
+        absent = absent_records
+        total_applicable = present + excused + absent_records
 
         rate = round((present + excused) / total_applicable * 100, 1) if total_applicable > 0 else 0
 
@@ -179,7 +149,7 @@ async def circle_student_stats(
             "student_name": row.name,
             "profile_pic": row.profile_pic,
             "sheikh_name": row.sheikh_name,
-            "total_sessions": total_sessions,
+            "total_sessions": total_records,
             "present": present,
             "excused": excused,
             "absent": absent,
