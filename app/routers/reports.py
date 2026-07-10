@@ -249,17 +249,23 @@ async def attendance_grid(
     if sheikh_id:
         result = await db.execute(
             select(Student)
+            .options(selectinload(Student.sheikh))
             .where(
                 Student.sheikh_id == sheikh_id,
                 Student.status == StudentStatus.enrolled,
             )
-            .order_by(Student.sort_order)
+            .order_by(Student.sort_order, Student.name)
         )
         students = result.scalars().all()
         student_ids = [s.id for s in students]
         student_map = {s.id: s for s in students}
     else:
-        result = await db.execute(select(Student).order_by(Student.name))
+        result = await db.execute(
+            select(Student)
+            .outerjoin(Sheikh)
+            .options(selectinload(Student.sheikh))
+            .order_by(Sheikh.name, Student.name)
+        )
         students = result.scalars().all()
         student_ids = [s.id for s in students]
         student_map = {s.id: s for s in students}
@@ -298,6 +304,7 @@ async def attendance_grid(
             "name": student.name,
             "profile_pic": student.profile_pic,
             "sheikh_id": student.sheikh_id,
+            "sheikh_name": student.sheikh.name if student.sheikh else None,
             "records": records,
         })
 
