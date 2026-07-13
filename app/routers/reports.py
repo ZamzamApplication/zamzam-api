@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus
+from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus, StudentWarning
 from app.routers.auth import get_current_user_depends
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -19,7 +19,16 @@ async def list_circles(
 ):
     result = await db.execute(select(Circle))
     circles = result.scalars().all()
-    return [{"id": c.id, "name": c.name, "description": c.description} for c in circles]
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "description": c.description,
+            "max_warnings": c.max_warnings,
+            "week_start_day": c.week_start_day,
+        }
+        for c in circles
+    ]
 
 
 @router.get("/circle/{circle_id}/rate")
@@ -283,6 +292,21 @@ async def attendance_grid(
     )
     attendance_records = result.scalars().all()
 
+    warning_count_result = await db.execute(
+        select(StudentWarning.student_id, func.count(StudentWarning.id))
+        .where(StudentWarning.student_id.in_(student_ids))
+        .group_by(StudentWarning.student_id)
+    )
+    warning_counts = dict(warning_count_result.all())
+
+    circle_ids = {s.sheikh.circle_id for s in students if s.sheikh}
+    circle_max_warnings: dict[int, int] = {}
+    if circle_ids:
+        circle_result = await db.execute(
+            select(Circle.id, Circle.max_warnings).where(Circle.id.in_(circle_ids))
+        )
+        circle_max_warnings = dict(circle_result.all())
+
     # Build lookup: (student_id, session_id) -> status
     att_lookup: dict[tuple[int, int], str] = {}
     for att in attendance_records:
@@ -299,12 +323,16 @@ async def attendance_grid(
         for sess in sessions:
             default_status = "لا ينطبق" if student.registration_date and student.registration_date > sess.date else "غياب"
             records[str(sess.id)] = att_lookup.get((sid, sess.id), default_status)
+        next_warning_number = warning_counts.get(sid, 0) + 1
+        max_warnings = circle_max_warnings.get(student.sheikh.circle_id, 3) if student.sheikh else 3
         students_data.append({
             "id": sid,
             "name": student.name,
             "profile_pic": student.profile_pic,
             "sheikh_id": student.sheikh_id,
             "sheikh_name": student.sheikh.name if student.sheikh else None,
+            "next_warning_number": next_warning_number,
+            "remaining_warnings": max(max_warnings - next_warning_number, 0),
             "records": records,
         })
 

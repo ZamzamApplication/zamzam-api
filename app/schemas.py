@@ -39,6 +39,7 @@ class CircleOut(BaseModel):
     name: str
     description: str | None = None
     max_warnings: int = 3
+    week_start_day: int = 6
 
     class Config:
         from_attributes = True
@@ -191,6 +192,7 @@ class CreateCircleRequest(BaseModel):
     name: str
     description: str | None = None
     max_warnings: int = 3
+    week_start_day: int = 6
 
 
 class UpdateSheikhRequest(BaseModel):
@@ -216,6 +218,7 @@ class UpdateCircleRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     max_warnings: int | None = None
+    week_start_day: int | None = None
 
 
 class SavedFilterOut(BaseModel):
@@ -276,4 +279,3 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
-

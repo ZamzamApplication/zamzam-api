@@ -54,6 +54,7 @@ class Circle(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     max_warnings: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    week_start_day: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle", cascade="all, delete-orphan")

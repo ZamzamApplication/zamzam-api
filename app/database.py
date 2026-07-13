@@ -231,6 +231,8 @@ async def migrate():
         circle_columns = {row[1] for row in result.fetchall()}
         if "max_warnings" not in circle_columns:
             await conn.execute(text("ALTER TABLE circles ADD COLUMN max_warnings INTEGER NOT NULL DEFAULT 3"))
+        if "week_start_day" not in circle_columns:
+            await conn.execute(text("ALTER TABLE circles ADD COLUMN week_start_day INTEGER NOT NULL DEFAULT 6"))
 
         # — Add warning_number, sent, sent_at to student_warnings —
         result = await conn.execute(text("PRAGMA table_info(student_warnings)"))

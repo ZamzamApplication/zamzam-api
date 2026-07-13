@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import delete as sa_delete, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -51,7 +51,8 @@ def build_warning_message(student_name: str, warning_number: int, reason: str, r
         f"انذار رقم {warning_number} الى الطالب \"{student_name}\"\n"
         f" بسبب غيابه بدون اعتذار عن حلقات:\n"
         f"{reason}\n\n"
-        f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}"
+        f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}\n\n"
+        "— تم إرسال هذه الرسالة عبر نظام مسجد زمزم الآلي —"
     )
 
 
@@ -186,6 +187,7 @@ async def list_sheikhs(
             "whatsapp_group_id": s.whatsapp_group_id,
             "circle_id": s.circle_id,
             "circle_name": s.circle.name,
+            "week_start_day": s.circle.week_start_day,
         }
         for s in sheikhs
     ]
@@ -600,6 +602,37 @@ async def add_and_send_warning(
     }
 
 
+@router.get("/students/{student_id}/warnings/preview")
+async def get_warning_preview_numbers(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    result = await db.execute(
+        select(Student).options(selectinload(Student.sheikh)).where(Student.id == student_id)
+    )
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    count_result = await db.execute(
+        select(func.count(StudentWarning.id)).where(StudentWarning.student_id == student_id)
+    )
+    next_warning_number = (count_result.scalar_one() or 0) + 1
+
+    max_warnings = 3
+    if student.sheikh:
+        circle_result = await db.execute(
+            select(Circle.max_warnings).where(Circle.id == student.sheikh.circle_id)
+        )
+        max_warnings = circle_result.scalar_one_or_none() or 3
+
+    return {
+        "next_warning_number": next_warning_number,
+        "remaining_warnings": max(max_warnings - next_warning_number, 0),
+    }
+
+
 @router.put("/warnings/{warning_id}")
 async def update_warning(
     warning_id: int,
@@ -784,7 +817,7 @@ async def list_circles(
 ):
     result = await db.execute(select(Circle))
     circles = result.scalars().all()
-    return [{"id": c.id, "name": c.name, "description": c.description, "max_warnings": c.max_warnings} for c in circles]
+    return [{"id": c.id, "name": c.name, "description": c.description, "max_warnings": c.max_warnings, "week_start_day": c.week_start_day} for c in circles]
 
 
 @router.post("/circles")
@@ -793,10 +826,12 @@ async def create_circle(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ):
-    circle = Circle(name=body.name, description=body.description, max_warnings=body.max_warnings)
+    if not 0 <= body.week_start_day <= 6:
+        raise HTTPException(status_code=400, detail="Invalid week start day")
+    circle = Circle(name=body.name, description=body.description, max_warnings=body.max_warnings, week_start_day=body.week_start_day)
     db.add(circle)
     await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings}
+    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings, "week_start_day": circle.week_start_day}
 
 
 @router.put("/circles/{circle_id}")
@@ -816,8 +851,12 @@ async def update_circle(
         circle.description = body.description
     if body.max_warnings is not None:
         circle.max_warnings = body.max_warnings
+    if body.week_start_day is not None:
+        if not 0 <= body.week_start_day <= 6:
+            raise HTTPException(status_code=400, detail="Invalid week start day")
+        circle.week_start_day = body.week_start_day
     await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings}
+    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings, "week_start_day": circle.week_start_day}
 
 
 @router.delete("/circles/{circle_id}")
