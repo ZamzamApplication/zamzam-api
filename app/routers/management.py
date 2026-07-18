@@ -1,5 +1,8 @@
+import asyncio
 import os
 import shutil
+import sqlite3
+import tempfile
 import uuid
 from datetime import date, datetime
 from io import BytesIO
@@ -7,6 +10,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from starlette.background import BackgroundTask
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import delete as sa_delete, func, select, update as sa_update
@@ -999,20 +1003,101 @@ async def delete_user(
     return {"message": "تم حذف المستخدم"}
 
 
+def database_file_path() -> str:
+    from urllib.parse import urlparse
+    parsed = urlparse(settings.DATABASE_URL)
+    db_path = parsed.path[1:] if parsed.path.startswith("/") else parsed.path
+    return os.path.abspath(db_path)
+
+
+def build_full_database(source_path: str) -> str:
+    fd, export_path = tempfile.mkstemp(prefix="zamzam-full-", suffix=".db")
+    os.close(fd)
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(export_path)
+    try:
+        source.backup(destination)
+        destination.execute("PRAGMA journal_mode=DELETE")
+    except Exception:
+        destination.close()
+        source.close()
+        os.unlink(export_path)
+        raise
+    destination.close()
+    source.close()
+    return export_path
+
+
 @router.get("/export-db")
 async def export_db(
     _=Depends(require_super_admin),
 ):
-    from urllib.parse import urlparse
-    parsed = urlparse(settings.DATABASE_URL)
-    db_path = parsed.path[1:] if parsed.path.startswith("/") else parsed.path
-    db_path = os.path.abspath(db_path)
+    db_path = database_file_path()
     if not os.path.isfile(db_path):
         raise HTTPException(status_code=404, detail=f"Database file not found at {db_path}")
+    export_path = await asyncio.to_thread(build_full_database, db_path)
     return FileResponse(
-        db_path,
-        media_type="application/octet-stream",
+        export_path,
+        media_type="application/vnd.sqlite3",
+        filename="zamzam_full_backup.db",
+        background=BackgroundTask(os.unlink, export_path),
+    )
+
+
+def build_tenant_database(source_path: str, tahfiz_id: int) -> str:
+    fd, export_path = tempfile.mkstemp(prefix=f"zamzam-tahfiz-{tahfiz_id}-", suffix=".db")
+    os.close(fd)
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(export_path)
+    try:
+        source.backup(destination)
+        destination.execute("PRAGMA foreign_keys=OFF")
+        tables = {
+            row[0]
+            for row in destination.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        statements = [
+            ("attendance", "DELETE FROM attendance WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("sessions", "DELETE FROM sessions WHERE tahfiz_id != ?", (tahfiz_id,)),
+            ("saved_filters", "DELETE FROM saved_filters WHERE tahfiz_id != ?", (tahfiz_id,)),
+            ("audit_logs", "DELETE FROM audit_logs WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("parent_phones", "DELETE FROM parent_phones WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
+            ("student_warnings", "DELETE FROM student_warnings WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
+            ("excused_weekdays", "DELETE FROM excused_weekdays WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
+            ("students", "DELETE FROM students WHERE tahfiz_id != ?", (tahfiz_id,)),
+            ("users", "DELETE FROM users WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("sheikhs", "DELETE FROM sheikhs WHERE tahfiz_id != ?", (tahfiz_id,)),
+            ("tahfiz", "DELETE FROM tahfiz WHERE id != ?", (tahfiz_id,)),
+        ]
+        for table, statement, parameters in statements:
+            if table in tables:
+                destination.execute(statement, parameters)
+        destination.commit()
+        destination.execute("PRAGMA journal_mode=DELETE")
+        destination.execute("VACUUM")
+    except Exception:
+        destination.close()
+        source.close()
+        os.unlink(export_path)
+        raise
+    destination.close()
+    source.close()
+    return export_path
+
+
+@router.get("/tahfiz/export-db")
+async def export_tahfiz_database(
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    db_path = database_file_path()
+    if not os.path.isfile(db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    export_path = await asyncio.to_thread(build_tenant_database, db_path, context.tahfiz_id)
+    return FileResponse(
+        export_path,
+        media_type="application/vnd.sqlite3",
         filename="zamzam_backup.db",
+        background=BackgroundTask(os.unlink, export_path),
     )
 
 
