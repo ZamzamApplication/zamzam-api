@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -35,6 +35,24 @@ class TahfizStatus(str, enum.Enum):
     suspended = "suspended"
 
 
+class ProgressCategory(str, enum.Enum):
+    new_memorization = "new_memorization"
+    recent_revision = "recent_revision"
+    old_revision = "old_revision"
+    test = "test"
+
+
+class QuranRangeType(str, enum.Enum):
+    surah_ayah = "surah_ayah"
+    page = "page"
+
+
+class StudentGoalStatus(str, enum.Enum):
+    active = "active"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
 class ParentType(str, enum.Enum):
     father = "أب"
     mother = "أم"
@@ -52,6 +70,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.admin, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
 
@@ -75,6 +94,7 @@ class Tahfiz(Base):
     whatsend_api_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     whatsend_groups_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
@@ -97,6 +117,9 @@ class Sheikh(Base):
 
 class ExcusedWeekday(Base):
     __tablename__ = "excused_weekdays"
+    __table_args__ = (
+        UniqueConstraint("student_id", "weekday", name="uq_excused_weekday_student_day"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
@@ -108,6 +131,9 @@ class ExcusedWeekday(Base):
 
 class Student(Base):
     __tablename__ = "students"
+    __table_args__ = (
+        Index("ix_students_tahfiz_sheikh_status_order", "tahfiz_id", "sheikh_id", "status", "sort_order"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -130,6 +156,9 @@ class Student(Base):
 
 class StudentWarning(Base):
     __tablename__ = "student_warnings"
+    __table_args__ = (
+        Index("ix_student_warnings_student_created", "student_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
@@ -156,11 +185,18 @@ class ParentPhone(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
+    __table_args__ = (
+        Index("ix_sessions_tahfiz_confirmed_date", "tahfiz_id", "is_confirmed", "date"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reopened_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reopened_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     tahfiz: Mapped[Tahfiz] = relationship("Tahfiz")
@@ -169,6 +205,10 @@ class Session(Base):
 
 class Attendance(Base):
     __tablename__ = "attendance"
+    __table_args__ = (
+        UniqueConstraint("session_id", "student_id", name="uq_attendance_session_student"),
+        Index("ix_attendance_tahfiz_session", "tahfiz_id", "session_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
@@ -192,6 +232,74 @@ class SavedFilter(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     data: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AttendanceBatchOperation(Base):
+    __tablename__ = "attendance_batch_operations"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "idempotency_key", name="uq_attendance_batch_tenant_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    resulting_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class QuranProgressEntry(Base):
+    __tablename__ = "quran_progress_entries"
+    __table_args__ = (
+        UniqueConstraint("session_id", "student_id", "category", name="uq_progress_session_student_category"),
+        Index("ix_progress_tahfiz_student_created", "tahfiz_id", "student_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    recorded_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    range_type: Mapped[QuranRangeType] = mapped_column(Enum(QuranRangeType), nullable=False)
+    from_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    mistakes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_assignment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class StudentGoal(Base):
+    __tablename__ = "student_goals"
+    __table_args__ = (
+        Index("ix_student_goals_tahfiz_student_status", "tahfiz_id", "student_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    range_type: Mapped[QuranRangeType] = mapped_column(Enum(QuranRangeType), nullable=False)
+    from_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[StudentGoalStatus] = mapped_column(Enum(StudentGoalStatus), default=StudentGoalStatus.active, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class AuditLog(Base):

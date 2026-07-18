@@ -56,6 +56,7 @@ async def list_circles(
             "description": context.tahfiz.description,
             "max_warnings": context.tahfiz.max_warnings,
             "week_start_day": context.tahfiz.week_start_day,
+            "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
         }
     ]
 
@@ -275,7 +276,7 @@ async def student_streak(
 async def attendance_grid(
     sheikh_id: int | None = Query(default=None),
     circle_id: int | None = Query(default=None),
-    limit: int | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=1000),
     session_ids: str | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
@@ -292,7 +293,10 @@ async def attendance_grid(
     if date_to:
         query = query.where(Session.date <= date_to)
     if session_ids:
-        parsed_ids = [int(s) for s in session_ids.split(",") if s.strip()]
+        try:
+            parsed_ids = [int(s) for s in session_ids.split(",") if s.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid session_ids")
         if parsed_ids:
             query = query.where(Session.id.in_(parsed_ids))
     query = query.order_by(Session.date.desc())
@@ -337,6 +341,7 @@ async def attendance_grid(
         select(Attendance).where(
             Attendance.student_id.in_(student_ids),
             Attendance.session_id.in_(session_ids),
+            Attendance.tahfiz_id == context.tahfiz_id,
         )
     )
     attendance_records = result.scalars().all()

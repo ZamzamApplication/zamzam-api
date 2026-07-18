@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -6,11 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.database import init_db
+from sqlalchemy import text
+
+from app.database import async_session, init_db
 from app.media import validate_media_token
-from app.routers import auth, sessions, attendance, reports, management, platform, saved_filters
+from app.routers import auth, sessions, attendance, reports, management, platform, progress, saved_filters
 from app.seed import seed_data
 
+logger = logging.getLogger(__name__)
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -18,7 +22,7 @@ app = FastAPI(title="Zamzam Tahfiz", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,6 +35,7 @@ app.include_router(reports.router)
 app.include_router(management.router)
 app.include_router(saved_filters.router)
 app.include_router(platform.router)
+app.include_router(progress.router)
 
 
 @app.get("/uploads/{filepath:path}")
@@ -52,10 +57,22 @@ async def serve_upload(filepath: str, token: str):
 
 @app.on_event("startup")
 async def startup():
+    production = settings.APP_ENV.lower() == "production" or bool(os.getenv("FLY_APP_NAME"))
+    security_issues = settings.security_issues()
+    if security_issues and production:
+        message = "Unsafe production security configuration: " + "; ".join(security_issues)
+        if settings.STRICT_SECURITY_VALIDATION:
+            raise RuntimeError(message)
+        logger.critical("%s. Set STRICT_SECURITY_VALIDATION=true after correcting it.", message)
     await init_db()
     await seed_data()
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ok", "database": "ok"}

@@ -1,5 +1,5 @@
 from datetime import date, datetime, time
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 
 class ParentPhoneOut(BaseModel):
@@ -152,6 +152,19 @@ class UpsertAttendanceRequest(BaseModel):
     sheikh_id: int | None = None
 
 
+class AttendanceBatchItem(BaseModel):
+    student_id: int
+    status: str
+    notes: str | None = Field(default=None, max_length=2000)
+    sheikh_id: int | None = None
+
+
+class AttendanceBatchRequest(BaseModel):
+    session_id: int
+    expected_version: int | None = Field(default=None, ge=0)
+    updates: list[AttendanceBatchItem] = Field(min_length=1, max_length=500)
+
+
 class CreateSessionRequest(BaseModel):
     circle_id: int | None = None  # Legacy cached-client compatibility
     session_date: date
@@ -163,8 +176,14 @@ class UpdateSessionRequest(BaseModel):
     session_date: date
 
 
+class ReopenSessionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    expected_version: int | None = Field(default=None, ge=0)
+
+
 class ConfirmSessionRequest(BaseModel):
     confirm: bool = True
+    expected_version: int | None = Field(default=None, ge=0)
 
 
 class CreateSheikhRequest(BaseModel):
@@ -240,6 +259,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None
+    progress_tracking_enabled: bool | None = None
 
 
 # Temporary request aliases for one cached-client compatibility release.
@@ -295,6 +315,57 @@ class UpdateUserRequest(BaseModel):
     password: str | None = None
     role: str | None = None
     sheikh_id: int | None = None
+
+
+class QuranRangeInput(BaseModel):
+    range_type: str
+    from_surah: int | None = Field(default=None, ge=1, le=114)
+    from_ayah: int | None = Field(default=None, ge=1)
+    to_surah: int | None = Field(default=None, ge=1, le=114)
+    to_ayah: int | None = Field(default=None, ge=1)
+    from_page: int | None = Field(default=None, ge=1, le=604)
+    to_page: int | None = Field(default=None, ge=1, le=604)
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.range_type == "surah_ayah":
+            if None in (self.from_surah, self.from_ayah, self.to_surah, self.to_ayah):
+                raise ValueError("Surah and ayah range is required")
+            if (self.to_surah, self.to_ayah) < (self.from_surah, self.from_ayah):
+                raise ValueError("Range end must not precede range start")
+        elif self.range_type == "page":
+            if self.from_page is None or self.to_page is None:
+                raise ValueError("Page range is required")
+            if self.to_page < self.from_page:
+                raise ValueError("Range end must not precede range start")
+        else:
+            raise ValueError("Invalid range type")
+        return self
+
+
+class QuranProgressItem(QuranRangeInput):
+    student_id: int
+    category: str
+    sheikh_id: int | None = None
+    quality_score: int = Field(ge=1, le=5)
+    mistakes: int = Field(default=0, ge=0, le=1000)
+    notes: str | None = Field(default=None, max_length=4000)
+    next_assignment: str | None = Field(default=None, max_length=4000)
+
+
+class QuranProgressBatchRequest(BaseModel):
+    updates: list[QuranProgressItem] = Field(min_length=1, max_length=500)
+
+
+class CreateStudentGoalRequest(QuranRangeInput):
+    target_date: date | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class UpdateStudentGoalRequest(BaseModel):
+    target_date: date | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+    status: str | None = None
 
 
 class UserOut(BaseModel):

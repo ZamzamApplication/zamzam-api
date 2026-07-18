@@ -22,7 +22,7 @@ from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
 from app.media import signed_media_url
-from app.models import Attendance, ExcusedWeekday, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, Tahfiz, User, UserRole
+from app.models import Attendance, AuditLog, ExcusedWeekday, ParentPhone, ParentType, QuranProgressEntry, SavedFilter, Session, Sheikh, Student, StudentGoal, StudentStatus, StudentWarning, Tahfiz, User, UserRole
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
     CreateParentPhone,
@@ -244,6 +244,15 @@ async def delete_sheikh(
     if not sheikh:
         raise HTTPException(status_code=404, detail="Sheikh not found")
     await db.execute(sa_update(Student).where(Student.sheikh_id == sheikh_id, Student.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
+    await db.execute(sa_update(Attendance).where(Attendance.sheikh_id == sheikh_id, Attendance.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
+    await db.execute(sa_update(QuranProgressEntry).where(QuranProgressEntry.sheikh_id == sheikh_id, QuranProgressEntry.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
+    await db.execute(sa_update(User).where(User.sheikh_id == sheikh_id, User.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="sheikh.deleted",
+        details=f"sheikh={sheikh.id}; name={sheikh.name}",
+    ))
     await db.delete(sheikh)
     await db.commit()
     return {"message": "تم حذف الشيخ"}
@@ -368,6 +377,7 @@ async def list_students(
             "profile_pic": signed_media_url(s.profile_pic, context.tahfiz_id),
             "status": s.status.value,
             "registration_date": s.registration_date.isoformat() if s.registration_date else None,
+            "sort_order": s.sort_order,
             "warnings": [
                 {"id": w.id, "reason": w.reason, "warning_number": w.warning_number, "sent": w.sent, "sent_at": w.sent_at.isoformat() if w.sent_at else None, "created_at": w.created_at.isoformat()}
                 for w in s.warnings
@@ -496,6 +506,14 @@ async def delete_student(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
+    await db.execute(sa_delete(QuranProgressEntry).where(
+        QuranProgressEntry.student_id == student_id,
+        QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+    ))
+    await db.execute(sa_delete(StudentGoal).where(
+        StudentGoal.student_id == student_id,
+        StudentGoal.tahfiz_id == context.tahfiz_id,
+    ))
     if delete_sessions:
         await db.delete(student)
     else:
@@ -503,6 +521,12 @@ async def delete_student(
             att.student_id = None
         await db.delete(student)
 
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.deleted",
+        details=f"student={student.id}; name={student.name}; delete_attendance={delete_sessions}",
+    ))
     await db.commit()
     return {"message": "تم حذف الطالب"}
 
@@ -855,6 +879,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
+        "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
     }
 
 
@@ -870,16 +895,33 @@ async def update_tahfiz_settings(
     context: TenantContext = Depends(require_tenant_admin),
 ):
     tahfiz = context.tahfiz
+    changed_fields: list[str] = []
     for field in ("name", "description", "contact_phone", "max_warnings", "whatsend_api_url", "whatsend_groups_url"):
         value = getattr(body, field)
         if value is not None:
-            setattr(tahfiz, field, value.strip() if isinstance(value, str) else value)
+            normalized = value.strip() if isinstance(value, str) else value
+            if getattr(tahfiz, field) != normalized:
+                setattr(tahfiz, field, normalized)
+                changed_fields.append(field)
     if body.week_start_day is not None:
         if not 0 <= body.week_start_day <= 6:
             raise HTTPException(status_code=400, detail="Invalid week start day")
-        tahfiz.week_start_day = body.week_start_day
+        if tahfiz.week_start_day != body.week_start_day:
+            tahfiz.week_start_day = body.week_start_day
+            changed_fields.append("week_start_day")
+    if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
+        tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
+        changed_fields.append("progress_tracking_enabled")
     if body.whatsend_api_key is not None:
         tahfiz.whatsend_api_key_encrypted = encrypt_secret(body.whatsend_api_key.strip()) if body.whatsend_api_key.strip() else None
+        changed_fields.append("whatsend_api_key")
+    if changed_fields:
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="tahfiz.settings_updated",
+            details=f"fields={','.join(changed_fields)}",
+        ))
     await db.commit()
     return serialize_tahfiz(tahfiz)
 
@@ -920,7 +962,10 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(User.tahfiz_id == context.tahfiz_id))
+    result = await db.execute(select(User).where(
+        User.tahfiz_id == context.tahfiz_id,
+        User.is_active == True,
+    ))
     users = result.scalars().all()
     return [
         {"id": u.id, "username": u.username, "role": u.role.value, "sheikh_id": u.sheikh_id}
@@ -975,13 +1020,29 @@ async def update_user(
     if body.role is not None:
         if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
             raise HTTPException(status_code=400, detail="Invalid tenant role")
+        if user.id == context.tahfiz.owner_user_id and body.role != UserRole.admin.value:
+            raise HTTPException(status_code=409, detail="Transfer ownership before demoting the owner")
+        if user.role == UserRole.admin and body.role != UserRole.admin.value:
+            admin_count = await db.scalar(select(func.count(User.id)).where(
+                User.tahfiz_id == context.tahfiz_id,
+                User.role == UserRole.admin,
+            ))
+            if (admin_count or 0) <= 1:
+                raise HTTPException(status_code=409, detail="A Tahfiz must keep at least one admin")
         user.role = UserRole(body.role)
-    if body.sheikh_id is not None:
-        sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
-        if not sheikh:
-            raise HTTPException(status_code=404, detail="Sheikh not found")
+    if "sheikh_id" in body.model_fields_set:
+        if body.sheikh_id is not None:
+            sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+            if not sheikh:
+                raise HTTPException(status_code=404, detail="Sheikh not found")
         user.sheikh_id = body.sheikh_id
 
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="user.updated",
+        details=f"user={user.id}",
+    ))
     await db.commit()
     return {"id": user.id, "username": user.username, "role": user.role.value, "sheikh_id": user.sheikh_id}
 
@@ -998,9 +1059,20 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     if user.id in (context.user.id, context.tahfiz.owner_user_id):
         raise HTTPException(status_code=400, detail="The owner or current user cannot be deleted")
-    await db.delete(user)
+    await db.execute(sa_update(SavedFilter).where(
+        SavedFilter.user_id == user.id,
+        SavedFilter.tahfiz_id == context.tahfiz_id,
+    ).values(user_id=context.user.id))
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="user.access_revoked",
+        details=f"user={user.id}; username={user.username}",
+    ))
+    user.is_active = False
+    user.sheikh_id = None
     await db.commit()
-    return {"message": "تم حذف المستخدم"}
+    return {"message": "تم إلغاء وصول المستخدم"}
 
 
 def database_file_path() -> str:

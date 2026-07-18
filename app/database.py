@@ -1,4 +1,4 @@
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -6,6 +6,15 @@ from app.config import settings
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+if settings.DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def configure_sqlite_connection(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
 
 class Base(DeclarativeBase):
@@ -68,6 +77,14 @@ async def migrate():
             await conn.execute(text("DROP TABLE sessions"))
             await conn.execute(text("ALTER TABLE sessions_new RENAME TO sessions"))
             await conn.execute(text("PRAGMA foreign_keys=ON"))
+        if "version" not in columns:
+            await conn.execute(text("ALTER TABLE sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0"))
+        if "reopened_at" not in columns:
+            await conn.execute(text("ALTER TABLE sessions ADD COLUMN reopened_at DATETIME"))
+        if "reopened_reason" not in columns:
+            await conn.execute(text("ALTER TABLE sessions ADD COLUMN reopened_reason VARCHAR(500)"))
+        if "reopened_by_id" not in columns:
+            await conn.execute(text("ALTER TABLE sessions ADD COLUMN reopened_by_id INTEGER REFERENCES users(id)"))
 
         # — Add new columns to students table —
         result = await conn.execute(text("PRAGMA table_info(students)"))
@@ -214,6 +231,8 @@ async def migrate():
             await conn.execute(text("PRAGMA foreign_keys=ON"))
         elif "password_hash" not in user_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''"))
+        if "is_active" not in user_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
         if "tahfiz_id" not in user_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN tahfiz_id INTEGER REFERENCES tahfiz(id)"))
             await conn.execute(text("""
@@ -340,6 +359,8 @@ async def migrate():
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_api_key_encrypted TEXT"))
         if "created_at" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
+        if "progress_tracking_enabled" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN progress_tracking_enabled BOOLEAN NOT NULL DEFAULT 0"))
         await conn.execute(text("UPDATE tahfiz SET name = 'زمزم' WHERE name = 'دار زمزم'"))
         await conn.execute(text("""
             UPDATE tahfiz
@@ -381,6 +402,50 @@ async def migrate():
         ))
         if result.scalar_one_or_none():
             await conn.execute(text("DROP TABLE circle_schedules"))
+
+        # Repair legacy duplicates before enforcing write-time invariants.
+        await conn.execute(text("""
+            DELETE FROM attendance
+            WHERE student_id IS NOT NULL
+              AND id NOT IN (
+                SELECT MAX(id)
+                FROM attendance
+                WHERE student_id IS NOT NULL
+                GROUP BY session_id, student_id
+              )
+        """))
+        await conn.execute(text("""
+            DELETE FROM excused_weekdays
+            WHERE id NOT IN (
+                SELECT MAX(id)
+                FROM excused_weekdays
+                GROUP BY student_id, weekday
+            )
+        """))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_attendance_session_student "
+            "ON attendance(session_id, student_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_attendance_tahfiz_session "
+            "ON attendance(tahfiz_id, session_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sessions_tahfiz_confirmed_date "
+            "ON sessions(tahfiz_id, is_confirmed, date)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_students_tahfiz_sheikh_status_order "
+            "ON students(tahfiz_id, sheikh_id, status, sort_order)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_student_warnings_student_created "
+            "ON student_warnings(student_id, created_at)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_excused_weekday_student_day "
+            "ON excused_weekdays(student_id, weekday)"
+        ))
 
 
 async def init_db():
