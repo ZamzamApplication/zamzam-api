@@ -223,6 +223,13 @@ async def migrate():
                 )
                 WHERE sheikh_id IS NOT NULL
             """))
+        # Legacy tenant administrators were not necessarily linked to a
+        # sheikh, so derive their workspace from the original single tenant.
+        await conn.execute(text("""
+            UPDATE users
+            SET tahfiz_id = (SELECT id FROM tahfiz ORDER BY id LIMIT 1)
+            WHERE tahfiz_id IS NULL AND role = 'admin' AND username != 'admin'
+        """))
         await conn.execute(text(
             "UPDATE users SET role = 'super_admin' WHERE username = 'admin' AND tahfiz_id IS NULL"
         ))
@@ -333,6 +340,18 @@ async def migrate():
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_api_key_encrypted TEXT"))
         if "created_at" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
+        await conn.execute(text("UPDATE tahfiz SET name = 'زمزم' WHERE name = 'دار زمزم'"))
+        await conn.execute(text("""
+            UPDATE tahfiz
+            SET owner_user_id = (
+                SELECT users.id
+                FROM users
+                WHERE users.tahfiz_id = tahfiz.id AND users.role = 'admin'
+                ORDER BY users.id
+                LIMIT 1
+            )
+            WHERE owner_user_id IS NULL
+        """))
 
         # — Add tenant ownership to saved filters —
         result = await conn.execute(text("PRAGMA table_info(saved_filters)"))
