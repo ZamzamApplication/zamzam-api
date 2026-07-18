@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.media import signed_media_url
 from app.models import Attendance, AttendanceStatus, Session, Sheikh, Student, StudentStatus, StudentWarning
 from app.routers.auth import TenantContext, get_tenant_context
 
@@ -189,7 +190,7 @@ async def circle_student_stats(
         students_data.append({
             "student_id": row.id,
             "student_name": row.name,
-            "profile_pic": row.profile_pic,
+            "profile_pic": signed_media_url(row.profile_pic, context.tahfiz_id),
             "sheikh_name": row.sheikh_name,
             "total_sessions": total_records,
             "present": present,
@@ -369,7 +370,7 @@ async def attendance_grid(
         students_data.append({
             "id": sid,
             "name": student.name,
-            "profile_pic": student.profile_pic,
+            "profile_pic": signed_media_url(student.profile_pic, context.tahfiz_id),
             "sheikh_id": student.sheikh_id,
             "sheikh_name": student.sheikh.name if student.sheikh else None,
             "next_warning_number": next_warning_number,

@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
+from app.media import signed_media_url
 from app.models import Attendance, ExcusedWeekday, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, Tahfiz, User, UserRole
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
@@ -116,10 +117,6 @@ async def fetch_whatsend_groups(tahfiz: Tahfiz) -> list[dict]:
         for group in groups
         if group.get("id")
     ]
-
-
-def pic_url(path: str) -> str:
-    return f"/uploads/{path}"
 
 
 def local_upload_name(path: str | None) -> str | None:
@@ -290,7 +287,7 @@ async def get_sheikh_students(
             "phone": r.phone,
             "student_id": r.student_id,
             "birthday": r.birthday.isoformat() if r.birthday else None,
-            "profile_pic": r.profile_pic,
+            "profile_pic": signed_media_url(r.profile_pic, context.tahfiz_id),
             "status": r.status.value,
             "registration_date": r.registration_date.isoformat() if r.registration_date else None,
             "warnings": [
@@ -364,7 +361,7 @@ async def list_students(
             "phone": s.phone,
             "student_id": s.student_id,
             "birthday": s.birthday.isoformat() if s.birthday else None,
-            "profile_pic": s.profile_pic,
+            "profile_pic": signed_media_url(s.profile_pic, context.tahfiz_id),
             "status": s.status.value,
             "registration_date": s.registration_date.isoformat() if s.registration_date else None,
             "warnings": [
@@ -448,7 +445,8 @@ async def update_student(
     if body.birthday is not None:
         student.birthday = body.birthday
     if body.profile_pic is not None:
-        student.profile_pic = body.profile_pic
+        clean_profile_pic = body.profile_pic.split("?", 1)[0]
+        student.profile_pic = local_upload_name(clean_profile_pic) or body.profile_pic
     if body.status is not None:
         student.status = StudentStatus(body.status)
     if body.registration_date is not None:
@@ -835,7 +833,7 @@ async def upload_student_pic(
     delete_upload(student.profile_pic)
     student.profile_pic = filename
     await db.commit()
-    return {"url": pic_url(filename)}
+    return {"url": signed_media_url(filename, context.tahfiz_id)}
 
 
 # ─── Tahfiz settings ─────────────────────────────────────────────────────────

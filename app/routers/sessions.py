@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.media import signed_media_url
 from app.models import Attendance, AttendanceStatus, ExcusedWeekday, Session, Sheikh, Student, StudentStatus
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
 from app.schemas import CreateSessionRequest, UpdateSessionRequest
@@ -255,7 +256,7 @@ async def get_session_attendance(
                 "id": s.id,
                 "name": s.name,
                 "phone": s.phone,
-                "profile_pic": s.profile_pic,
+                "profile_pic": signed_media_url(s.profile_pic, context.tahfiz_id),
                 "attendance_id": att.id if att else None,
                 "status": status,
                 "notes": notes,

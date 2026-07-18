@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.database import init_db
+from app.media import validate_media_token
 from app.routers import auth, sessions, attendance, reports, management, platform, saved_filters
 from app.seed import seed_data
 
@@ -33,10 +34,19 @@ app.include_router(platform.router)
 
 
 @app.get("/uploads/{filepath:path}")
-async def serve_upload(filepath: str):
-    file = UPLOAD_DIR / filepath
-    if not file.exists() or not file.is_file():
+async def serve_upload(filepath: str, token: str):
+    try:
+        tahfiz_id = validate_media_token(token, filepath)
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired media link")
+    file = (UPLOAD_DIR / filepath).resolve()
+    upload_root = UPLOAD_DIR.resolve()
+    if upload_root not in file.parents or not file.exists() or not file.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    # New uploads are tenant-prefixed. Legacy root files remain protected by
+    # the signed token's tenant claim during the compatibility migration.
+    if "/" in filepath and filepath.split("/", 1)[0] != str(tahfiz_id):
+        raise HTTPException(status_code=403, detail="Media does not belong to this Tahfiz")
     return FileResponse(str(file))
 
 
