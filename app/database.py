@@ -20,24 +20,49 @@ async def get_db():
             await session.close()
 
 
+async def migrate_legacy_circle_names():
+    """Promote the legacy Circle tenant boundary to Tahfiz before ORM startup."""
+    async with engine.begin() as conn:
+        tables = {
+            row[0]
+            for row in (await conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ))).fetchall()
+        }
+        if "circles" in tables and "tahfiz" not in tables:
+            await conn.execute(text("ALTER TABLE circles RENAME TO tahfiz"))
+
+        for table_name in ("sheikhs", "sessions"):
+            if table_name not in tables:
+                continue
+            columns = {
+                row[1]
+                for row in (await conn.execute(text(f"PRAGMA table_info({table_name})"))).fetchall()
+            }
+            if "circle_id" in columns and "tahfiz_id" not in columns:
+                await conn.execute(text(
+                    f"ALTER TABLE {table_name} RENAME COLUMN circle_id TO tahfiz_id"
+                ))
+
+
 async def migrate():
     async with engine.begin() as conn:
         # — Session migration (already exists) —
         result = await conn.execute(text("PRAGMA table_info(sessions)"))
         columns = {row[1] for row in result.fetchall()}
-        if "circle_id" not in columns:
+        if "circle_id" not in columns and "tahfiz_id" not in columns:
             await conn.execute(text("PRAGMA foreign_keys=OFF"))
             await conn.execute(text("""
                 CREATE TABLE sessions_new (
                     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
                     date DATE NOT NULL,
-                    circle_id INTEGER NOT NULL DEFAULT 1 REFERENCES circles(id),
+                    tahfiz_id INTEGER NOT NULL DEFAULT 1 REFERENCES tahfiz(id),
                     is_confirmed BOOLEAN NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """))
             await conn.execute(text(
-                "INSERT INTO sessions_new (id, date, circle_id, is_confirmed, created_at) "
+                "INSERT INTO sessions_new (id, date, tahfiz_id, is_confirmed, created_at) "
                 "SELECT id, date, 1, is_confirmed, created_at FROM sessions"
             ))
             await conn.execute(text("DROP TABLE sessions"))
@@ -57,6 +82,28 @@ async def migrate():
             await conn.execute(text("ALTER TABLE students ADD COLUMN student_id VARCHAR(50)"))
         if "registration_date" not in student_columns:
             await conn.execute(text("ALTER TABLE students ADD COLUMN registration_date DATE"))
+        if "tahfiz_id" not in student_columns:
+            await conn.execute(text("ALTER TABLE students ADD COLUMN tahfiz_id INTEGER REFERENCES tahfiz(id)"))
+            if "sheikh_id" in student_columns:
+                await conn.execute(text("""
+                    UPDATE students
+                    SET tahfiz_id = (
+                        SELECT sheikhs.tahfiz_id FROM sheikhs WHERE sheikhs.id = students.sheikh_id
+                    )
+                    WHERE sheikh_id IS NOT NULL
+                """))
+            await conn.execute(text("""
+                UPDATE students
+                SET tahfiz_id = (
+                    SELECT sessions.tahfiz_id
+                    FROM attendance
+                    JOIN sessions ON sessions.id = attendance.session_id
+                    WHERE attendance.student_id = students.id
+                    ORDER BY sessions.date DESC
+                    LIMIT 1
+                )
+                WHERE tahfiz_id IS NULL
+            """))
 
         # — Create student_warnings table —
         result = await conn.execute(text(
@@ -91,6 +138,16 @@ async def migrate():
         att_columns = {row[1] for row in result.fetchall()}
         if "notes" not in att_columns:
             await conn.execute(text("ALTER TABLE attendance ADD COLUMN notes TEXT"))
+        if "tahfiz_id" not in att_columns:
+            await conn.execute(text("ALTER TABLE attendance ADD COLUMN tahfiz_id INTEGER REFERENCES tahfiz(id)"))
+            await conn.execute(text("""
+                UPDATE attendance
+                SET tahfiz_id = (
+                    SELECT sessions.tahfiz_id FROM sessions WHERE sessions.id = attendance.session_id
+                )
+            """))
+        if "sheikh_id" not in att_columns:
+            await conn.execute(text("ALTER TABLE attendance ADD COLUMN sheikh_id INTEGER REFERENCES sheikhs(id)"))
 
         # — Add notes to excused weekdays —
         result = await conn.execute(text("PRAGMA table_info(excused_weekdays)"))
@@ -108,12 +165,15 @@ async def migrate():
                     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
                     session_id INTEGER NOT NULL REFERENCES sessions(id),
                     student_id INTEGER REFERENCES students(id),
-                    status VARCHAR(20) NOT NULL DEFAULT 'غياب'
+                    sheikh_id INTEGER REFERENCES sheikhs(id),
+                    tahfiz_id INTEGER REFERENCES tahfiz(id),
+                    status VARCHAR(20) NOT NULL DEFAULT 'غياب',
+                    notes TEXT
                 )
             """))
             await conn.execute(text(
-                "INSERT INTO attendance_new (id, session_id, student_id, status) "
-                "SELECT id, session_id, student_id, status FROM attendance"
+                "INSERT INTO attendance_new (id, session_id, student_id, sheikh_id, tahfiz_id, status, notes) "
+                "SELECT id, session_id, student_id, sheikh_id, tahfiz_id, status, notes FROM attendance"
             ))
             await conn.execute(text("DROP TABLE attendance"))
             await conn.execute(text("ALTER TABLE attendance_new RENAME TO attendance"))
@@ -154,6 +214,18 @@ async def migrate():
             await conn.execute(text("PRAGMA foreign_keys=ON"))
         elif "password_hash" not in user_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''"))
+        if "tahfiz_id" not in user_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN tahfiz_id INTEGER REFERENCES tahfiz(id)"))
+            await conn.execute(text("""
+                UPDATE users
+                SET tahfiz_id = (
+                    SELECT sheikhs.tahfiz_id FROM sheikhs WHERE sheikhs.id = users.sheikh_id
+                )
+                WHERE sheikh_id IS NOT NULL
+            """))
+        await conn.execute(text(
+            "UPDATE users SET role = 'super_admin' WHERE username = 'admin' AND tahfiz_id IS NULL"
+        ))
 
         # — Migrate sheikh_id + sort_order from student_sheikhs to students —
         result = await conn.execute(text("PRAGMA table_info(students)"))
@@ -184,6 +256,13 @@ async def migrate():
                 )
             """))
             await conn.execute(text("DROP TABLE student_sheikhs"))
+        await conn.execute(text("""
+            UPDATE students
+            SET tahfiz_id = (
+                SELECT sheikhs.tahfiz_id FROM sheikhs WHERE sheikhs.id = students.sheikh_id
+            )
+            WHERE tahfiz_id IS NULL AND sheikh_id IS NOT NULL
+        """))
 
         # — Migrate is_enrolled → status on students —
         result = await conn.execute(text("PRAGMA table_info(students)"))
@@ -209,12 +288,13 @@ async def migrate():
                     status VARCHAR(20) NOT NULL DEFAULT 'مقيد',
                     registration_date DATE,
                     sheikh_id INTEGER REFERENCES sheikhs(id),
+                    tahfiz_id INTEGER REFERENCES tahfiz(id),
                     sort_order INTEGER NOT NULL DEFAULT 0
                 )
             """))
             await conn.execute(text("""
-                INSERT INTO students_new (id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, sort_order)
-                SELECT id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, sort_order FROM students
+                INSERT INTO students_new (id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, tahfiz_id, sort_order)
+                SELECT id, name, phone, student_id, birthday, profile_pic, status, registration_date, sheikh_id, tahfiz_id, sort_order FROM students
             """))
             await conn.execute(text("DROP TABLE students"))
             await conn.execute(text("ALTER TABLE students_new RENAME TO students"))
@@ -226,13 +306,45 @@ async def migrate():
         if "whatsapp_group_id" not in sheikh_columns:
             await conn.execute(text("ALTER TABLE sheikhs ADD COLUMN whatsapp_group_id VARCHAR(255)"))
 
-        # — Add max_warnings to circles —
-        result = await conn.execute(text("PRAGMA table_info(circles)"))
-        circle_columns = {row[1] for row in result.fetchall()}
-        if "max_warnings" not in circle_columns:
-            await conn.execute(text("ALTER TABLE circles ADD COLUMN max_warnings INTEGER NOT NULL DEFAULT 3"))
-        if "week_start_day" not in circle_columns:
-            await conn.execute(text("ALTER TABLE circles ADD COLUMN week_start_day INTEGER NOT NULL DEFAULT 6"))
+        # — Promote legacy organization settings to Tahfiz tenancy —
+        result = await conn.execute(text("PRAGMA table_info(tahfiz)"))
+        tahfiz_columns = {row[1] for row in result.fetchall()}
+        if "max_warnings" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN max_warnings INTEGER NOT NULL DEFAULT 3"))
+        if "week_start_day" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN week_start_day INTEGER NOT NULL DEFAULT 6"))
+        if "contact_phone" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN contact_phone VARCHAR(20)"))
+        if "status" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'"))
+        if "owner_user_id" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN owner_user_id INTEGER"))
+        if "approved_by_id" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN approved_by_id INTEGER"))
+        if "approved_at" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN approved_at DATETIME"))
+        if "status_reason" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN status_reason VARCHAR(255)"))
+        if "whatsend_api_url" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_api_url VARCHAR(500)"))
+        if "whatsend_groups_url" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_groups_url VARCHAR(500)"))
+        if "whatsend_api_key_encrypted" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_api_key_encrypted TEXT"))
+        if "created_at" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
+
+        # — Add tenant ownership to saved filters —
+        result = await conn.execute(text("PRAGMA table_info(saved_filters)"))
+        saved_filter_columns = {row[1] for row in result.fetchall()}
+        if saved_filter_columns and "tahfiz_id" not in saved_filter_columns:
+            await conn.execute(text("ALTER TABLE saved_filters ADD COLUMN tahfiz_id INTEGER REFERENCES tahfiz(id)"))
+            await conn.execute(text("""
+                UPDATE saved_filters
+                SET tahfiz_id = (
+                    SELECT users.tahfiz_id FROM users WHERE users.id = saved_filters.user_id
+                )
+            """))
 
         # — Add warning_number, sent, sent_at to student_warnings —
         result = await conn.execute(text("PRAGMA table_info(student_warnings)"))
@@ -253,6 +365,10 @@ async def migrate():
 
 
 async def init_db():
+    await migrate_legacy_circle_names()
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA busy_timeout=5000"))
+        await conn.execute(text("PRAGMA foreign_keys=ON"))
         await conn.run_sync(Base.metadata.create_all)
     await migrate()

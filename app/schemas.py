@@ -34,10 +34,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class CircleOut(BaseModel):
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    tahfiz_name: str
+    contact_phone: str | None = None
+
+
+class TahfizOut(BaseModel):
     id: int
     name: str
     description: str | None = None
+    contact_phone: str | None = None
+    status: str = "pending"
     max_warnings: int = 3
     week_start_day: int = 6
 
@@ -120,7 +129,7 @@ class SessionAttendanceOut(BaseModel):
 
 class SessionOut(BaseModel):
     id: int
-    circle_id: int
+    tahfiz_id: int
     session_date: date
     is_confirmed: bool
     created_at: str
@@ -144,7 +153,7 @@ class UpsertAttendanceRequest(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    circle_id: int
+    circle_id: int | None = None  # Legacy cached-client compatibility
     session_date: date
     session_time: time | None = None
     default_status: str = "غياب"
@@ -162,7 +171,7 @@ class CreateSheikhRequest(BaseModel):
     name: str
     phone: str | None = None
     whatsapp_group_id: str | None = None
-    circle_id: int | None = None
+    circle_id: int | None = None  # Legacy cached-client compatibility
 
 
 class CreateStudentRequest(BaseModel):
@@ -188,18 +197,22 @@ class ReorderStudentsRequest(BaseModel):
     student_ids: list[int]
 
 
-class CreateCircleRequest(BaseModel):
+class UpdateTahfizRequest(BaseModel):
     name: str
     description: str | None = None
+    contact_phone: str | None = None
     max_warnings: int = 3
     week_start_day: int = 6
+    whatsend_api_url: str | None = None
+    whatsend_groups_url: str | None = None
+    whatsend_api_key: str | None = None
 
 
 class UpdateSheikhRequest(BaseModel):
     name: str | None = None
     phone: str | None = None
     whatsapp_group_id: str | None = None
-    circle_id: int | None = None
+    circle_id: int | None = None  # Legacy cached-client compatibility
 
 
 class UpdateStudentRequest(BaseModel):
@@ -214,11 +227,24 @@ class UpdateStudentRequest(BaseModel):
     parent_phones: list[UpdateParentPhone] | None = None
 
 
-class UpdateCircleRequest(BaseModel):
+class PlatformTahfizActionRequest(BaseModel):
+    reason: str | None = None
+
+
+class UpdateTahfizSettingsRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    contact_phone: str | None = None
     max_warnings: int | None = None
     week_start_day: int | None = None
+    whatsend_api_url: str | None = None
+    whatsend_groups_url: str | None = None
+    whatsend_api_key: str | None = None
+
+
+# Temporary request aliases for one cached-client compatibility release.
+CreateCircleRequest = UpdateTahfizRequest
+UpdateCircleRequest = UpdateTahfizSettingsRequest
 
 
 class SavedFilterOut(BaseModel):

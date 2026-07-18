@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     WHATSEND_API_URL: str = "http://localhost:8000/api/send"
     WHATSEND_API_GROUPS_URL: str = ""
     WHATSEND_API_KEY: str = ""
+    INTEGRATION_ENCRYPTION_KEY: str = "change-this-in-production"
 
     class Config:
         env_file = ".env"

@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, ExcusedWeekday, Session, Sheikh, Student, StudentStatus
-from app.routers.auth import get_current_user_depends, require_admin
+from app.models import Attendance, AttendanceStatus, ExcusedWeekday, Session, Sheikh, Student, StudentStatus
+from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
 from app.schemas import CreateSessionRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -16,11 +16,12 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 @router.get("/all")
 async def get_all_sessions(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.circle))
+        .options(selectinload(Session.tahfiz))
+        .where(Session.tahfiz_id == context.tahfiz_id)
         .order_by(Session.date.desc())
     )
     result = await db.execute(query)
@@ -30,8 +31,10 @@ async def get_all_sessions(
             "id": s.id,
             "date": s.date.isoformat(),
             "is_confirmed": s.is_confirmed,
-            "circle_id": s.circle_id,
-            "circle_name": s.circle.name,
+            "tahfiz_id": s.tahfiz_id,
+            "tahfiz_name": s.tahfiz.name,
+            "circle_id": s.tahfiz_id,
+            "circle_name": s.tahfiz.name,
         }
         for s in sessions
     ]
@@ -40,12 +43,12 @@ async def get_all_sessions(
 @router.get("/past")
 async def get_past_sessions(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.circle))
-        .where(Session.is_confirmed == True)
+        .options(selectinload(Session.tahfiz))
+        .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
         .order_by(Session.date.desc())
     )
     result = await db.execute(query)
@@ -55,8 +58,10 @@ async def get_past_sessions(
             "id": s.id,
             "date": s.date.isoformat(),
             "is_confirmed": s.is_confirmed,
-            "circle_id": s.circle_id,
-            "circle_name": s.circle.name,
+            "tahfiz_id": s.tahfiz_id,
+            "tahfiz_name": s.tahfiz.name,
+            "circle_id": s.tahfiz_id,
+            "circle_name": s.tahfiz.name,
         }
         for s in sessions
     ]
@@ -65,12 +70,12 @@ async def get_past_sessions(
 @router.get("/upcoming")
 async def get_upcoming_sessions(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.circle))
-        .where(Session.is_confirmed == False)
+        .options(selectinload(Session.tahfiz))
+        .where(Session.is_confirmed == False, Session.tahfiz_id == context.tahfiz_id)
         .order_by(Session.date)
     )
     result = await db.execute(query)
@@ -80,8 +85,10 @@ async def get_upcoming_sessions(
             "id": s.id,
             "date": s.date.isoformat(),
             "is_confirmed": s.is_confirmed,
-            "circle_id": s.circle_id,
-            "circle_name": s.circle.name,
+            "tahfiz_id": s.tahfiz_id,
+            "tahfiz_name": s.tahfiz.name,
+            "circle_id": s.tahfiz_id,
+            "circle_name": s.tahfiz.name,
         }
         for s in sessions
     ]
@@ -91,16 +98,12 @@ async def get_upcoming_sessions(
 async def create_session(
     body: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     if body.default_status not in [s.value for s in AttendanceStatus]:
         raise HTTPException(status_code=400, detail=f"Invalid default status")
 
-    result = await db.execute(select(Circle).where(Circle.id == body.circle_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Circle not found")
-
-    session = Session(date=body.session_date, circle_id=body.circle_id)
+    session = Session(date=body.session_date, tahfiz_id=context.tahfiz_id)
     db.add(session)
     await db.flush()
 
@@ -108,7 +111,7 @@ async def create_session(
         select(Student)
         .join(Sheikh)
         .where(
-            Sheikh.circle_id == body.circle_id,
+            Sheikh.tahfiz_id == context.tahfiz_id,
             Student.status == StudentStatus.enrolled,
         )
     )
@@ -119,19 +122,20 @@ async def create_session(
     # We use: 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
     # Convert: (wd + 1) % 7
     weekday_local = (session_weekday + 1) % 7
+    excused_rows = (await db.execute(
+        select(ExcusedWeekday).where(
+            ExcusedWeekday.student_id.in_([student.id for student in students]),
+            ExcusedWeekday.weekday == weekday_local,
+        )
+    )).scalars().all() if students else []
+    excused_by_student = {row.student_id: row for row in excused_rows}
 
     for s in students:
         notes = None
         if s.registration_date and s.registration_date > body.session_date:
             status = AttendanceStatus.not_applicable
         else:
-            result = await db.execute(
-                select(ExcusedWeekday).where(
-                    ExcusedWeekday.student_id == s.id,
-                    ExcusedWeekday.weekday == weekday_local,
-                )
-            )
-            excused_weekday = result.scalar_one_or_none()
+            excused_weekday = excused_by_student.get(s.id)
             if excused_weekday:
                 status = AttendanceStatus.not_applicable
                 notes = excused_weekday.note
@@ -140,13 +144,14 @@ async def create_session(
         db.add(Attendance(
             session_id=session.id,
             student_id=s.id,
+            tahfiz_id=context.tahfiz_id,
             status=status,
             notes=notes,
         ))
 
     await db.commit()
     await db.refresh(session)
-    return {"id": session.id, "date": session.date.isoformat(), "circle_id": session.circle_id}
+    return {"id": session.id, "date": session.date.isoformat(), "tahfiz_id": session.tahfiz_id, "circle_id": session.tahfiz_id}
 
 
 @router.put("/{session_id}")
@@ -154,9 +159,9 @@ async def update_session(
     session_id: int,
     body: UpdateSessionRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Session).where(Session.id == session_id))
+    result = await db.execute(select(Session).where(Session.id == session_id, Session.tahfiz_id == context.tahfiz_id))
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -170,10 +175,13 @@ async def update_session(
 async def get_session_attendance(
     session_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Session).options(selectinload(Session.circle)).where(Session.id == session_id)
+        select(Session).options(selectinload(Session.tahfiz)).where(
+            Session.id == session_id,
+            Session.tahfiz_id == context.tahfiz_id,
+        )
     )
     session = result.scalar_one_or_none()
     if not session:
@@ -184,7 +192,7 @@ async def get_session_attendance(
         .options(
             selectinload(Sheikh.students)
         )
-        .where(Sheikh.circle_id == session.circle_id)
+        .where(Sheikh.tahfiz_id == session.tahfiz_id)
     )
     circle_sheikhs = result.scalars().all()
 
@@ -197,26 +205,36 @@ async def get_session_attendance(
     sheikh_groups = []
     session_weekday = session.date.weekday()
     weekday_local = (session_weekday + 1) % 7
+    student_ids = [
+        student.id
+        for sheikh in circle_sheikhs
+        for student in sheikh.students
+        if student.status == StudentStatus.enrolled
+    ]
+    attendance_rows = (await db.execute(
+        select(Attendance).where(
+            Attendance.session_id == session_id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+            Attendance.student_id.in_(student_ids),
+        )
+    )).scalars().all() if student_ids else []
+    attendance_by_student = {row.student_id: row for row in attendance_rows}
+    excused_rows = (await db.execute(
+        select(ExcusedWeekday).where(
+            ExcusedWeekday.student_id.in_(student_ids),
+            ExcusedWeekday.weekday == weekday_local,
+        )
+    )).scalars().all() if student_ids else []
+    excused_by_student = {row.student_id: row for row in excused_rows}
+
     for sheikh in circle_sheikhs:
         students_list = []
         for s in sheikh.students:
             if s.status != StudentStatus.enrolled:
                 continue
-            excused_result = await db.execute(
-                select(ExcusedWeekday).where(
-                    ExcusedWeekday.student_id == s.id,
-                    ExcusedWeekday.weekday == weekday_local,
-                )
-            )
-            excused_weekday = excused_result.scalar_one_or_none()
+            excused_weekday = excused_by_student.get(s.id)
             excused_note = excused_weekday.note if excused_weekday else None
-            att_result = await db.execute(
-                select(Attendance).where(
-                    Attendance.session_id == session_id,
-                    Attendance.student_id == s.id,
-                )
-            )
-            att = att_result.scalar_one_or_none()
+            att = attendance_by_student.get(s.id)
             # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
             default_sheikh_id = s.sheikh_id
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
@@ -253,8 +271,10 @@ async def get_session_attendance(
         "session_id": session.id,
         "date": session.date.isoformat(),
         "is_confirmed": session.is_confirmed,
-        "circle_id": session.circle_id,
-        "circle_name": session.circle.name,
+        "tahfiz_id": session.tahfiz_id,
+        "tahfiz_name": session.tahfiz.name,
+        "circle_id": session.tahfiz_id,
+        "circle_name": session.tahfiz.name,
         "sheikh_groups": sheikh_groups,
         "circle_sheikhs": circle_sheikhs_list,
     }
@@ -264,9 +284,9 @@ async def get_session_attendance(
 async def confirm_session(
     session_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Session).where(Session.id == session_id))
+    result = await db.execute(select(Session).where(Session.id == session_id, Session.tahfiz_id == context.tahfiz_id))
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -276,7 +296,7 @@ async def confirm_session(
         select(Student)
         .join(Sheikh)
         .where(
-            Sheikh.circle_id == session.circle_id,
+            Sheikh.tahfiz_id == session.tahfiz_id,
             Student.status == StudentStatus.enrolled,
         )
     )
@@ -297,19 +317,20 @@ async def confirm_session(
     weekday_local = (session_weekday + 1) % 7
 
     missing = all_student_ids - with_records
+    excused_rows = (await db.execute(
+        select(ExcusedWeekday).where(
+            ExcusedWeekday.student_id.in_(missing),
+            ExcusedWeekday.weekday == weekday_local,
+        )
+    )).scalars().all() if missing else []
+    excused_by_student = {row.student_id: row for row in excused_rows}
     for sid in missing:
         s = student_map.get(sid)
         notes = None
         if s and s.registration_date and s.registration_date > session.date:
             status = AttendanceStatus.not_applicable
         else:
-            result = await db.execute(
-                select(ExcusedWeekday).where(
-                    ExcusedWeekday.student_id == sid,
-                    ExcusedWeekday.weekday == weekday_local,
-                )
-            )
-            excused_weekday = result.scalar_one_or_none()
+            excused_weekday = excused_by_student.get(sid)
             if s and excused_weekday:
                 status = AttendanceStatus.not_applicable
                 notes = excused_weekday.note
@@ -318,6 +339,7 @@ async def confirm_session(
         db.add(Attendance(
             session_id=session_id,
             student_id=sid,
+            tahfiz_id=context.tahfiz_id,
             status=status,
             notes=notes,
         ))
@@ -331,9 +353,9 @@ async def confirm_session(
 async def delete_session(
     session_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Session).where(Session.id == session_id))
+    result = await db.execute(select(Session).where(Session.id == session_id, Session.tahfiz_id == context.tahfiz_id))
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")

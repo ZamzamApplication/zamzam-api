@@ -23,8 +23,16 @@ class AttendanceStatus(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
+    super_admin = "super_admin"
     admin = "admin"
     sheikh = "sheikh"
+
+
+class TahfizStatus(str, enum.Enum):
+    pending = "pending"
+    active = "active"
+    rejected = "rejected"
+    suspended = "suspended"
 
 
 class ParentType(str, enum.Enum):
@@ -45,19 +53,32 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.admin, nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
+
+    tahfiz: Mapped["Tahfiz | None"] = relationship("Tahfiz", foreign_keys=[tahfiz_id], back_populates="users")
 
 
-class Circle(Base):
-    __tablename__ = "circles"
+class Tahfiz(Base):
+    __tablename__ = "tahfiz"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[TahfizStatus] = mapped_column(Enum(TahfizStatus), default=TahfizStatus.pending, nullable=False, index=True)
     max_warnings: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     week_start_day: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    whatsend_api_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    whatsend_groups_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="circle", cascade="all, delete-orphan")
+    sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
+    users: Mapped[list["User"]] = relationship("User", foreign_keys=[User.tahfiz_id], back_populates="tahfiz")
 
 
 class Sheikh(Base):
@@ -67,9 +88,9 @@ class Sheikh(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     whatsapp_group_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
 
-    circle: Mapped[Circle] = relationship("Circle", back_populates="sheikhs")
+    tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="sheikhs")
     students: Mapped[list["Student"]] = relationship("Student", back_populates="sheikh", foreign_keys="[Student.sheikh_id]")
     user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
 
@@ -97,6 +118,7 @@ class Student(Base):
     status: Mapped[StudentStatus] = mapped_column(Enum(StudentStatus, values_callable=lambda x: [e.value for e in x]), default=StudentStatus.enrolled, nullable=False)
     registration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     sheikh: Mapped[Sheikh | None] = relationship("Sheikh", back_populates="students")
@@ -137,11 +159,11 @@ class Session(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    circle_id: Mapped[int] = mapped_column(Integer, ForeignKey("circles.id"), nullable=False, default=1)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    circle: Mapped[Circle] = relationship("Circle")
+    tahfiz: Mapped[Tahfiz] = relationship("Tahfiz")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session", cascade="all, delete-orphan")
 
 
@@ -152,6 +174,7 @@ class Attendance(Base):
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
     student_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("students.id"), nullable=True)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     status: Mapped[AttendanceStatus] = mapped_column(Enum(AttendanceStatus), default=AttendanceStatus.absent, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -165,6 +188,18 @@ class SavedFilter(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     data: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

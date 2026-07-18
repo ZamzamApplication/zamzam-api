@@ -16,10 +16,10 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db
 
-from app.models import Attendance, Circle, ExcusedWeekday, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, User, UserRole
-from app.routers.auth import pwd_context, require_admin
+from app.integrations import encrypt_secret, tenant_whatsend_config
+from app.models import Attendance, ExcusedWeekday, ParentPhone, ParentType, Session, Sheikh, Student, StudentStatus, StudentWarning, Tahfiz, User, UserRole
+from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
-    CreateCircleRequest,
     CreateParentPhone,
     CreateSheikhRequest,
     CreateStudentRequest,
@@ -29,7 +29,7 @@ from app.schemas import (
     ReorderStudentsRequest,
     SendStudentWarningRequest,
     SendWarningsRequest,
-    UpdateCircleRequest,
+    UpdateTahfizSettingsRequest,
     UpdateExcusedWeekdaysRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,
@@ -52,22 +52,20 @@ def build_warning_message(student_name: str, warning_number: int, reason: str, r
         f" بسبب غيابه بدون اعتذار عن حلقات:\n"
         f"{reason}\n\n"
         f"عدد الانذارات المتبقية قبل الاستبعاد: {remaining}\n\n"
-        "— تم إرسال هذه الرسالة عبر نظام مسجد زمزم الآلي —"
+        "— تم إرسال هذه الرسالة عبر نظام زمزم الآلي —"
     )
 
 
 @router.get("/whatsend/groups")
-async def list_whatsend_groups(_=Depends(require_admin)):
+async def list_whatsend_groups(
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    tahfiz = await db.get(Tahfiz, context.tahfiz_id)
     try:
-        return {"groups": await fetch_whatsend_groups()}
+        return {"groups": await fetch_whatsend_groups(tahfiz)}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"فشل تحميل مجموعات واتساب: {whatsend_error(e)}")
-
-
-def whatsend_groups_url() -> str:
-    if settings.WHATSEND_API_GROUPS_URL:
-        return settings.WHATSEND_API_GROUPS_URL
-    return settings.WHATSEND_API_URL.rsplit("/", 1)[0] + "/groups"
 
 
 def whatsend_error(exc: Exception) -> str:
@@ -88,25 +86,27 @@ def whatsend_error(exc: Exception) -> str:
     return str(exc)
 
 
-async def send_whatsend_group_message(group_id: str, message: str) -> None:
-    if not settings.WHATSEND_API_KEY:
+async def send_whatsend_group_message(tahfiz: Tahfiz, group_id: str, message: str) -> None:
+    api_url, _, api_key = tenant_whatsend_config(tahfiz)
+    if not api_key:
         raise RuntimeError("مفتاح WhatSend API غير مضبوط")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
-            settings.WHATSEND_API_URL,
-            headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+            api_url,
+            headers={"Authorization": f"Bearer {api_key}"},
             json={"group_id": group_id, "message": message},
         )
         resp.raise_for_status()
 
 
-async def fetch_whatsend_groups() -> list[dict]:
-    if not settings.WHATSEND_API_KEY:
+async def fetch_whatsend_groups(tahfiz: Tahfiz) -> list[dict]:
+    _, groups_url, api_key = tenant_whatsend_config(tahfiz)
+    if not api_key:
         raise RuntimeError("مفتاح WhatSend API غير مضبوط")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
-            whatsend_groups_url(),
-            headers={"Authorization": f"Bearer {settings.WHATSEND_API_KEY}"},
+            groups_url,
+            headers={"Authorization": f"Bearer {api_key}"},
         )
         resp.raise_for_status()
     data = resp.json()
@@ -175,9 +175,13 @@ def compress_profile_image(content: bytes) -> bytes:
 @router.get("/sheikhs")
 async def list_sheikhs(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(get_tenant_context),
 ):
-    result = await db.execute(select(Sheikh).options(selectinload(Sheikh.circle)))
+    result = await db.execute(
+        select(Sheikh)
+        .options(selectinload(Sheikh.tahfiz))
+        .where(Sheikh.tahfiz_id == context.tahfiz_id)
+    )
     sheikhs = result.scalars().all()
     return [
         {
@@ -185,9 +189,11 @@ async def list_sheikhs(
             "name": s.name,
             "phone": s.phone,
             "whatsapp_group_id": s.whatsapp_group_id,
-            "circle_id": s.circle_id,
-            "circle_name": s.circle.name,
-            "week_start_day": s.circle.week_start_day,
+            "tahfiz_id": s.tahfiz_id,
+            "tahfiz_name": s.tahfiz.name,
+            "circle_id": s.tahfiz_id,
+            "circle_name": s.tahfiz.name,
+            "week_start_day": s.tahfiz.week_start_day,
         }
         for s in sheikhs
     ]
@@ -197,12 +203,12 @@ async def list_sheikhs(
 async def create_sheikh(
     body: CreateSheikhRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    sheikh = Sheikh(name=body.name, phone=body.phone, whatsapp_group_id=body.whatsapp_group_id, circle_id=body.circle_id)
+    sheikh = Sheikh(name=body.name, phone=body.phone, whatsapp_group_id=body.whatsapp_group_id, tahfiz_id=context.tahfiz_id)
     db.add(sheikh)
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "circle_id": sheikh.circle_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
 
 
 @router.put("/sheikhs/{sheikh_id}")
@@ -210,9 +216,9 @@ async def update_sheikh(
     sheikh_id: int,
     body: UpdateSheikhRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id))
+    result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
     sheikh = result.scalar_one_or_none()
     if not sheikh:
         raise HTTPException(status_code=404, detail="Sheikh not found")
@@ -222,23 +228,21 @@ async def update_sheikh(
         sheikh.phone = body.phone
     if body.whatsapp_group_id is not None:
         sheikh.whatsapp_group_id = body.whatsapp_group_id
-    if body.circle_id is not None:
-        sheikh.circle_id = body.circle_id
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "circle_id": sheikh.circle_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
 
 
 @router.delete("/sheikhs/{sheikh_id}")
 async def delete_sheikh(
     sheikh_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id))
+    result = await db.execute(select(Sheikh).where(Sheikh.id == sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
     sheikh = result.scalar_one_or_none()
     if not sheikh:
         raise HTTPException(status_code=404, detail="Sheikh not found")
-    await db.execute(sa_update(Student).where(Student.sheikh_id == sheikh_id).values(sheikh_id=None))
+    await db.execute(sa_update(Student).where(Student.sheikh_id == sheikh_id, Student.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
     await db.delete(sheikh)
     await db.commit()
     return {"message": "تم حذف الشيخ"}
@@ -251,8 +255,11 @@ async def delete_sheikh(
 async def get_sheikh_students(
     sheikh_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
+    sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+    if not sheikh:
+        raise HTTPException(status_code=404, detail="Sheikh not found")
     result = await db.execute(
         select(Student)
         .options(
@@ -261,6 +268,7 @@ async def get_sheikh_students(
         )
         .where(
             Student.sheikh_id == sheikh_id,
+            Student.tahfiz_id == context.tahfiz_id,
         )
         .order_by(Student.sort_order)
     )
@@ -304,13 +312,14 @@ async def reorder_students(
     sheikh_id: int,
     body: ReorderStudentsRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     for i, student_id in enumerate(body.student_ids):
         result = await db.execute(
             select(Student).where(
                 Student.id == student_id,
                 Student.sheikh_id == sheikh_id,
+                Student.tahfiz_id == context.tahfiz_id,
             )
         )
         student = result.scalar_one_or_none()
@@ -326,7 +335,7 @@ async def reorder_students(
 @router.get("/students")
 async def list_students(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     result = await db.execute(
         select(Student)
@@ -335,6 +344,7 @@ async def list_students(
             selectinload(Student.parent_phones),
             selectinload(Student.warnings),
         )
+        .where(Student.tahfiz_id == context.tahfiz_id)
         .order_by(Student.name)
     )
     students = result.scalars().all()
@@ -376,8 +386,12 @@ async def list_students(
 async def create_student(
     body: CreateStudentRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
+    if body.sheikh_id is not None:
+        sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+        if not sheikh:
+            raise HTTPException(status_code=404, detail="Sheikh not found")
     student = Student(
         name=body.name,
         phone=body.phone,
@@ -386,6 +400,7 @@ async def create_student(
         status=StudentStatus(body.status),
         registration_date=body.registration_date or date.today(),
         sheikh_id=body.sheikh_id,
+        tahfiz_id=context.tahfiz_id,
     )
     db.add(student)
     await db.flush()
@@ -411,14 +426,14 @@ async def update_student(
     student_id: int,
     body: UpdateStudentRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     result = await db.execute(
         select(Student)
         .options(
             selectinload(Student.parent_phones),
         )
-        .where(Student.id == student_id)
+        .where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
     student = result.scalar_one_or_none()
     if not student:
@@ -439,6 +454,9 @@ async def update_student(
     if body.registration_date is not None:
         student.registration_date = body.registration_date
     if body.sheikh_id is not None:
+        sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+        if not sheikh:
+            raise HTTPException(status_code=404, detail="Sheikh not found")
         student.sheikh_id = body.sheikh_id
 
     if body.parent_phones is not None:
@@ -463,14 +481,14 @@ async def delete_student(
     student_id: int,
     delete_sessions: bool = False,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     result = await db.execute(
         select(Student)
         .options(
             selectinload(Student.attendance_records),
         )
-        .where(Student.id == student_id)
+        .where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
     student = result.scalar_one_or_none()
     if not student:
@@ -492,9 +510,9 @@ async def move_student_sheikh(
     student_id: int,
     body: MoveStudentRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id))
+    result = await db.execute(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
     student = result.scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -502,7 +520,7 @@ async def move_student_sheikh(
     if student.sheikh_id == body.sheikh_id:
         raise HTTPException(status_code=400, detail="الطالب بالفعل تحت هذا الشيخ")
 
-    result = await db.execute(select(Sheikh).where(Sheikh.id == body.sheikh_id))
+    result = await db.execute(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Sheikh not found")
 
@@ -517,9 +535,9 @@ async def add_warning(
     student_id: int,
     body: CreateWarningRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id))
+    result = await db.execute(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Student not found")
 
@@ -541,16 +559,16 @@ async def add_and_send_warning(
     student_id: int,
     body: SendStudentWarningRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     absent_dates = [d.strip() for d in body.absent_dates if d.strip()]
     if not absent_dates:
-        raise HTTPException(status_code=400, detail="اختر حلقة واحدة على الأقل")
+        raise HTTPException(status_code=400, detail="اختر جلسة واحدة على الأقل")
 
     result = await db.execute(
         select(Student)
         .options(selectinload(Student.sheikh))
-        .where(Student.id == student_id)
+        .where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
     student = result.scalar_one_or_none()
     if not student:
@@ -567,9 +585,8 @@ async def add_and_send_warning(
     )
     warning_number = len(count_result.scalars().all()) + 1
 
-    circle_result = await db.execute(select(Circle).where(Circle.id == sheikh.circle_id))
-    circle = circle_result.scalar_one_or_none()
-    max_warnings = circle.max_warnings if circle else 3
+    tahfiz = await db.get(Tahfiz, context.tahfiz_id)
+    max_warnings = tahfiz.max_warnings
     remaining = max(max_warnings - warning_number, 0)
     reason = "\n".join(f"* {d}" for d in absent_dates)
     message = build_warning_message(student.name, warning_number, reason, remaining)
@@ -582,7 +599,7 @@ async def add_and_send_warning(
     db.add(warning)
 
     try:
-        await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
+        await send_whatsend_group_message(tahfiz, sheikh.whatsapp_group_id, message)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=502, detail=f"فشل إرسال الإنذار: {whatsend_error(e)}")
@@ -606,10 +623,10 @@ async def add_and_send_warning(
 async def get_warning_preview_numbers(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     result = await db.execute(
-        select(Student).options(selectinload(Student.sheikh)).where(Student.id == student_id)
+        select(Student).options(selectinload(Student.sheikh)).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
     student = result.scalar_one_or_none()
     if not student:
@@ -620,12 +637,8 @@ async def get_warning_preview_numbers(
     )
     next_warning_number = (count_result.scalar_one() or 0) + 1
 
-    max_warnings = 3
-    if student.sheikh:
-        circle_result = await db.execute(
-            select(Circle.max_warnings).where(Circle.id == student.sheikh.circle_id)
-        )
-        max_warnings = circle_result.scalar_one_or_none() or 3
+    tahfiz = await db.get(Tahfiz, context.tahfiz_id)
+    max_warnings = tahfiz.max_warnings
 
     return {
         "next_warning_number": next_warning_number,
@@ -638,9 +651,14 @@ async def update_warning(
     warning_id: int,
     body: CreateWarningRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
+    result = await db.execute(
+        select(StudentWarning).where(
+            StudentWarning.id == warning_id,
+            StudentWarning.student.has(Student.tahfiz_id == context.tahfiz_id),
+        )
+    )
     warning = result.scalar_one_or_none()
     if not warning:
         raise HTTPException(status_code=404, detail="Warning not found")
@@ -655,9 +673,14 @@ async def update_warning(
 async def delete_warning(
     warning_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(StudentWarning).where(StudentWarning.id == warning_id))
+    result = await db.execute(
+        select(StudentWarning).where(
+            StudentWarning.id == warning_id,
+            StudentWarning.student.has(Student.tahfiz_id == context.tahfiz_id),
+        )
+    )
     warning = result.scalar_one_or_none()
     if not warning:
         raise HTTPException(status_code=404, detail="Warning not found")
@@ -671,11 +694,12 @@ async def delete_warning(
 async def list_warnings(
     sheikh_id: int | None = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     query = (
         select(StudentWarning)
         .options(selectinload(StudentWarning.student).selectinload(Student.sheikh))
+        .where(StudentWarning.student.has(Student.tahfiz_id == context.tahfiz_id))
         .order_by(StudentWarning.created_at.desc())
     )
     if sheikh_id is not None:
@@ -703,14 +727,18 @@ async def list_warnings(
 async def send_warnings(
     body: SendWarningsRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
+    tahfiz = await db.get(Tahfiz, context.tahfiz_id)
     results: list[dict] = []
     for wid in body.warning_ids:
         result = await db.execute(
             select(StudentWarning)
             .options(selectinload(StudentWarning.student).selectinload(Student.sheikh))
-            .where(StudentWarning.id == wid)
+            .where(
+                StudentWarning.id == wid,
+                StudentWarning.student.has(Student.tahfiz_id == context.tahfiz_id),
+            )
         )
         warning = result.scalar_one_or_none()
         if not warning:
@@ -723,15 +751,13 @@ async def send_warnings(
             results.append({"warning_id": wid, "success": False, "error": "شيخ الطالب ليس لديه معرف مجموعة واتساب"})
             continue
 
-        circle = await db.execute(select(Circle).where(Circle.id == sheikh.circle_id))
-        circle_obj = circle.scalar_one_or_none()
-        max_w = circle_obj.max_warnings if circle_obj else 3
+        max_w = tahfiz.max_warnings
         remaining = max_w - warning.warning_number
 
         message = build_warning_message(student.name, warning.warning_number, warning.reason, remaining)
 
         try:
-            await send_whatsend_group_message(sheikh.whatsapp_group_id, message)
+            await send_whatsend_group_message(tahfiz, sheikh.whatsapp_group_id, message)
         except Exception as e:
             results.append({"warning_id": wid, "success": False, "error": whatsend_error(e)})
             continue
@@ -748,8 +774,11 @@ async def send_warnings(
 async def get_excused_weekdays(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
+    student = await db.scalar(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
     result = await db.execute(
         select(ExcusedWeekday).where(ExcusedWeekday.student_id == student_id)
     )
@@ -761,9 +790,9 @@ async def update_excused_weekdays(
     student_id: int,
     body: UpdateExcusedWeekdaysRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id))
+    result = await db.execute(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Student not found")
 
@@ -784,9 +813,9 @@ async def upload_student_pic(
     student_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id))
+    result = await db.execute(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
     student = result.scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -796,7 +825,9 @@ async def upload_student_pic(
 
     content = await file.read()
     compressed = compress_profile_image(content)
-    filename = f"{uuid.uuid4()}.webp"
+    tenant_dir = UPLOAD_DIR / str(context.tahfiz_id)
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{context.tahfiz_id}/{uuid.uuid4()}.webp"
     filepath = UPLOAD_DIR / filename
     with open(filepath, "wb") as f:
         f.write(compressed)
@@ -807,73 +838,76 @@ async def upload_student_pic(
     return {"url": pic_url(filename)}
 
 
-# ─── Circles ─────────────────────────────────────────────────────────────────
+# ─── Tahfiz settings ─────────────────────────────────────────────────────────
 
 
-@router.get("/circles")
-async def list_circles(
+def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
+    return {
+        "id": tahfiz.id,
+        "name": tahfiz.name,
+        "description": tahfiz.description,
+        "contact_phone": tahfiz.contact_phone,
+        "status": tahfiz.status.value,
+        "max_warnings": tahfiz.max_warnings,
+        "week_start_day": tahfiz.week_start_day,
+        "whatsend_api_url": tahfiz.whatsend_api_url,
+        "whatsend_groups_url": tahfiz.whatsend_groups_url,
+        "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
+    }
+
+
+@router.get("/tahfiz/settings")
+async def get_tahfiz_settings(context: TenantContext = Depends(require_tenant_admin)):
+    return serialize_tahfiz(context.tahfiz)
+
+
+@router.put("/tahfiz/settings")
+async def update_tahfiz_settings(
+    body: UpdateTahfizSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Circle))
-    circles = result.scalars().all()
-    return [{"id": c.id, "name": c.name, "description": c.description, "max_warnings": c.max_warnings, "week_start_day": c.week_start_day} for c in circles]
-
-
-@router.post("/circles")
-async def create_circle(
-    body: CreateCircleRequest,
-    db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
-):
-    if not 0 <= body.week_start_day <= 6:
-        raise HTTPException(status_code=400, detail="Invalid week start day")
-    circle = Circle(name=body.name, description=body.description, max_warnings=body.max_warnings, week_start_day=body.week_start_day)
-    db.add(circle)
-    await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings, "week_start_day": circle.week_start_day}
-
-
-@router.put("/circles/{circle_id}")
-async def update_circle(
-    circle_id: int,
-    body: UpdateCircleRequest,
-    db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
-):
-    result = await db.execute(select(Circle).where(Circle.id == circle_id))
-    circle = result.scalar_one_or_none()
-    if not circle:
-        raise HTTPException(status_code=404, detail="Circle not found")
-    if body.name is not None:
-        circle.name = body.name
-    if body.description is not None:
-        circle.description = body.description
-    if body.max_warnings is not None:
-        circle.max_warnings = body.max_warnings
+    tahfiz = context.tahfiz
+    for field in ("name", "description", "contact_phone", "max_warnings", "whatsend_api_url", "whatsend_groups_url"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(tahfiz, field, value.strip() if isinstance(value, str) else value)
     if body.week_start_day is not None:
         if not 0 <= body.week_start_day <= 6:
             raise HTTPException(status_code=400, detail="Invalid week start day")
-        circle.week_start_day = body.week_start_day
+        tahfiz.week_start_day = body.week_start_day
+    if body.whatsend_api_key is not None:
+        tahfiz.whatsend_api_key_encrypted = encrypt_secret(body.whatsend_api_key.strip()) if body.whatsend_api_key.strip() else None
     await db.commit()
-    return {"id": circle.id, "name": circle.name, "description": circle.description, "max_warnings": circle.max_warnings, "week_start_day": circle.week_start_day}
+    return serialize_tahfiz(tahfiz)
+
+
+# Cached-client compatibility: the former circle is now the current Tahfiz.
+@router.get("/circles")
+async def list_circles(context: TenantContext = Depends(require_tenant_admin)):
+    return [serialize_tahfiz(context.tahfiz)]
+
+
+@router.post("/circles")
+async def create_circle_compat(context: TenantContext = Depends(require_tenant_admin)):
+    raise HTTPException(status_code=409, detail="Each account has one Tahfiz workspace")
+
+
+@router.put("/circles/{circle_id}")
+async def update_circle_compat(
+    circle_id: int,
+    body: UpdateTahfizSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    if circle_id != context.tahfiz_id:
+        raise HTTPException(status_code=404, detail="Tahfiz not found")
+    return await update_tahfiz_settings(body, db, context)
 
 
 @router.delete("/circles/{circle_id}")
-async def delete_circle(
-    circle_id: int,
-    db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
-):
-    result = await db.execute(select(Circle).where(Circle.id == circle_id))
-    circle = result.scalar_one_or_none()
-    if not circle:
-        raise HTTPException(status_code=404, detail="Circle not found")
-
-    await db.execute(sa_update(Student).where(Student.sheikh.has(Sheikh.circle_id == circle_id)).values(sheikh_id=None))
-    await db.delete(circle)
-    await db.commit()
-    return {"message": "تم حذف الحلقة"}
+async def delete_circle_compat(circle_id: int, context: TenantContext = Depends(require_tenant_admin)):
+    raise HTTPException(status_code=403, detail="Tahfiz workspaces can only be suspended by the platform administrator")
 
 
 # ─── Users ───────────────────────────────────────────────────────────────────
@@ -882,9 +916,9 @@ async def delete_circle(
 @router.get("/users")
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User))
+    result = await db.execute(select(User).where(User.tahfiz_id == context.tahfiz_id))
     users = result.scalars().all()
     return [
         {"id": u.id, "username": u.username, "role": u.role.value, "sheikh_id": u.sheikh_id}
@@ -896,17 +930,24 @@ async def list_users(
 async def create_user(
     body: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
     existing = await db.execute(select(User).where(User.username == body.username))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username already exists")
 
+    if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
+        raise HTTPException(status_code=400, detail="Invalid tenant role")
+    if body.sheikh_id is not None:
+        sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+        if not sheikh:
+            raise HTTPException(status_code=404, detail="Sheikh not found")
     user = User(
         username=body.username,
         password_hash=pwd_context.hash(body.password),
         role=UserRole(body.role),
         sheikh_id=body.sheikh_id,
+        tahfiz_id=context.tahfiz_id,
     )
     db.add(user)
     await db.commit()
@@ -918,9 +959,9 @@ async def update_user(
     user_id: int,
     body: UpdateUserRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id, User.tahfiz_id == context.tahfiz_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -930,8 +971,13 @@ async def update_user(
     if body.password is not None:
         user.password_hash = pwd_context.hash(body.password)
     if body.role is not None:
+        if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
+            raise HTTPException(status_code=400, detail="Invalid tenant role")
         user.role = UserRole(body.role)
     if body.sheikh_id is not None:
+        sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
+        if not sheikh:
+            raise HTTPException(status_code=404, detail="Sheikh not found")
         user.sheikh_id = body.sheikh_id
 
     await db.commit()
@@ -942,12 +988,14 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_admin),
+    context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id, User.tahfiz_id == context.tahfiz_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if user.id in (context.user.id, context.tahfiz.owner_user_id):
+        raise HTTPException(status_code=400, detail="The owner or current user cannot be deleted")
     await db.delete(user)
     await db.commit()
     return {"message": "تم حذف المستخدم"}
@@ -955,7 +1003,7 @@ async def delete_user(
 
 @router.get("/export-db")
 async def export_db(
-    _=Depends(require_admin),
+    _=Depends(require_super_admin),
 ):
     from urllib.parse import urlparse
     parsed = urlparse(settings.DATABASE_URL)
@@ -968,3 +1016,50 @@ async def export_db(
         media_type="application/octet-stream",
         filename="zamzam_backup.db",
     )
+
+
+@router.get("/tahfiz/export")
+async def export_tahfiz(
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    tahfiz_id = context.tahfiz_id
+    sheikhs = (await db.execute(select(Sheikh).where(Sheikh.tahfiz_id == tahfiz_id))).scalars().all()
+    students = (await db.execute(select(Student).where(Student.tahfiz_id == tahfiz_id))).scalars().all()
+    sessions = (await db.execute(select(Session).where(Session.tahfiz_id == tahfiz_id))).scalars().all()
+    attendance = (await db.execute(select(Attendance).where(Attendance.tahfiz_id == tahfiz_id))).scalars().all()
+    users = (await db.execute(select(User).where(User.tahfiz_id == tahfiz_id))).scalars().all()
+    student_ids = [student.id for student in students]
+    parent_phones = (await db.execute(select(ParentPhone).where(ParentPhone.student_id.in_(student_ids)))).scalars().all() if student_ids else []
+    warnings = (await db.execute(select(StudentWarning).where(StudentWarning.student_id.in_(student_ids)))).scalars().all() if student_ids else []
+    excused = (await db.execute(select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids)))).scalars().all() if student_ids else []
+
+    return {
+        "format": "zamzam-tahfiz-export-v1",
+        "exported_at": datetime.utcnow().isoformat(),
+        "tahfiz": serialize_tahfiz(context.tahfiz),
+        "users": [{"id": row.id, "username": row.username, "role": row.role.value, "sheikh_id": row.sheikh_id} for row in users],
+        "sheikhs": [{"id": row.id, "name": row.name, "phone": row.phone, "whatsapp_group_id": row.whatsapp_group_id} for row in sheikhs],
+        "students": [{
+            "id": row.id, "name": row.name, "phone": row.phone, "student_id": row.student_id,
+            "birthday": row.birthday.isoformat() if row.birthday else None, "profile_pic": row.profile_pic,
+            "status": row.status.value, "registration_date": row.registration_date.isoformat() if row.registration_date else None,
+            "sheikh_id": row.sheikh_id, "sort_order": row.sort_order,
+        } for row in students],
+        "sessions": [{"id": row.id, "date": row.date.isoformat(), "is_confirmed": row.is_confirmed} for row in sessions],
+        "attendance": [{
+            "id": row.id, "session_id": row.session_id, "student_id": row.student_id,
+            "sheikh_id": row.sheikh_id, "status": row.status.value, "notes": row.notes,
+        } for row in attendance],
+        "parent_phones": [{
+            "id": row.id, "student_id": row.student_id, "phone_number": row.phone_number,
+            "parent_type": row.parent_type.value, "name": row.name,
+        } for row in parent_phones],
+        "warnings": [{
+            "id": row.id, "student_id": row.student_id, "reason": row.reason,
+            "warning_number": row.warning_number, "sent": row.sent,
+            "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+            "created_at": row.created_at.isoformat(),
+        } for row in warnings],
+        "excused_weekdays": [{"id": row.id, "student_id": row.student_id, "weekday": row.weekday, "note": row.note} for row in excused],
+    }

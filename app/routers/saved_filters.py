@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import SavedFilter
-from app.routers.auth import get_current_user_depends
+from app.routers.auth import TenantContext, get_tenant_context
 from app.schemas import CreateSavedFilterRequest, SavedFilterOut, UpdateSavedFilterRequest
 
 router = APIRouter(prefix="/saved-filters", tags=["saved-filters"])
@@ -13,11 +13,14 @@ router = APIRouter(prefix="/saved-filters", tags=["saved-filters"])
 @router.get("/")
 async def list_saved_filters(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(SavedFilter)
-        .where(SavedFilter.user_id == current_user.id)
+        .where(
+            SavedFilter.user_id == context.user.id,
+            SavedFilter.tahfiz_id == context.tahfiz_id,
+        )
         .order_by(SavedFilter.created_at.desc())
     )
     return [
@@ -30,9 +33,9 @@ async def list_saved_filters(
 async def create_saved_filter(
     body: CreateSavedFilterRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
-    sf = SavedFilter(user_id=current_user.id, name=body.name, data=body.data)
+    sf = SavedFilter(user_id=context.user.id, tahfiz_id=context.tahfiz_id, name=body.name, data=body.data)
     db.add(sf)
     await db.commit()
     await db.refresh(sf)
@@ -44,12 +47,13 @@ async def update_saved_filter(
     filter_id: int,
     body: UpdateSavedFilterRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(SavedFilter).where(
             SavedFilter.id == filter_id,
-            SavedFilter.user_id == current_user.id,
+            SavedFilter.user_id == context.user.id,
+            SavedFilter.tahfiz_id == context.tahfiz_id,
         )
     )
     sf = result.scalar_one_or_none()
@@ -68,12 +72,13 @@ async def update_saved_filter(
 async def delete_saved_filter(
     filter_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(SavedFilter).where(
             SavedFilter.id == filter_id,
-            SavedFilter.user_id == current_user.id,
+            SavedFilter.user_id == context.user.id,
+            SavedFilter.tahfiz_id == context.tahfiz_id,
         )
     )
     sf = result.scalar_one_or_none()

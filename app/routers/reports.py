@@ -6,28 +6,56 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Attendance, AttendanceStatus, Circle, Session, Sheikh, Student, StudentStatus, StudentWarning
-from app.routers.auth import get_current_user_depends
+from app.models import Attendance, AttendanceStatus, Session, Sheikh, Student, StudentStatus, StudentWarning
+from app.routers.auth import TenantContext, get_tenant_context
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+@router.get("/dashboard-summary")
+async def dashboard_summary(
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    tahfiz_id = context.tahfiz_id
+    result = await db.execute(
+        select(
+            select(func.count(Sheikh.id)).where(Sheikh.tahfiz_id == tahfiz_id).scalar_subquery(),
+            select(func.count(Student.id)).where(
+                Student.tahfiz_id == tahfiz_id,
+                Student.status == StudentStatus.enrolled,
+            ).scalar_subquery(),
+            select(func.count(Session.id)).where(Session.tahfiz_id == tahfiz_id).scalar_subquery(),
+            select(func.count(Session.id)).where(
+                Session.tahfiz_id == tahfiz_id,
+                Session.is_confirmed == True,
+            ).scalar_subquery(),
+        )
+    )
+    sheikhs, students, sessions, confirmed = result.one()
+    return {
+        "tahfiz_name": context.tahfiz.name,
+        "sheikhs": sheikhs,
+        "students": students,
+        "sessions": sessions,
+        "confirmed_sessions": confirmed,
+        "pending_sessions": sessions - confirmed,
+    }
 
 
 @router.get("/circles")
 async def list_circles(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
-    result = await db.execute(select(Circle))
-    circles = result.scalars().all()
     return [
         {
-            "id": c.id,
-            "name": c.name,
-            "description": c.description,
-            "max_warnings": c.max_warnings,
-            "week_start_day": c.week_start_day,
+            "id": context.tahfiz.id,
+            "name": context.tahfiz.name,
+            "description": context.tahfiz.description,
+            "max_warnings": context.tahfiz.max_warnings,
+            "week_start_day": context.tahfiz.week_start_day,
         }
-        for c in circles
     ]
 
 
@@ -37,14 +65,16 @@ async def circle_attendance_rate(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     from collections import Counter
 
+    if circle_id != context.tahfiz_id:
+        raise HTTPException(status_code=404, detail="Tahfiz not found")
+    tahfiz_id = context.tahfiz_id
     result = await db.execute(
         select(Student.id)
-        .join(Sheikh)
-        .where(Sheikh.circle_id == circle_id, Student.status == StudentStatus.enrolled)
+        .where(Student.tahfiz_id == tahfiz_id, Student.status == StudentStatus.enrolled)
     )
     student_ids = [row[0] for row in result.all()]
 
@@ -62,7 +92,7 @@ async def circle_attendance_rate(
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
-        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+        .where(Session.tahfiz_id == tahfiz_id, Session.is_confirmed == True)
     )
     if date_from:
         att_query = att_query.where(Session.date >= date_from)
@@ -109,12 +139,15 @@ async def circle_student_stats(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
+    if circle_id != context.tahfiz_id:
+        raise HTTPException(status_code=404, detail="Tahfiz not found")
+    tahfiz_id = context.tahfiz_id
     result = await db.execute(
         select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
-        .where(Sheikh.circle_id == circle_id, Student.status == StudentStatus.enrolled)
+        .where(Student.tahfiz_id == tahfiz_id, Student.status == StudentStatus.enrolled)
         .order_by(Sheikh.name, Student.sort_order)
     )
     rows = result.all()
@@ -124,7 +157,7 @@ async def circle_student_stats(
         select(Attendance.student_id, Attendance.status)
         .where(Attendance.student_id.in_(student_ids))
         .join(Session)
-        .where(Session.circle_id == circle_id, Session.is_confirmed == True)
+        .where(Session.tahfiz_id == tahfiz_id, Session.is_confirmed == True)
     )
     if date_from:
         att_query = att_query.where(Session.date >= date_from)
@@ -173,8 +206,14 @@ async def circle_student_stats(
 async def student_streak(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
+    student = await db.scalar(select(Student.id).where(
+        Student.id == student_id,
+        Student.tahfiz_id == context.tahfiz_id,
+    ))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
     result = await db.execute(
         select(func.count(Attendance.id))
         .where(
@@ -182,7 +221,7 @@ async def student_streak(
             Attendance.status == AttendanceStatus.absent,
         )
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
     )
     total_absent = result.scalar() or 0
 
@@ -193,7 +232,7 @@ async def student_streak(
             Attendance.status != AttendanceStatus.not_applicable,
         )
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
     )
     total = result.scalar() or 0
 
@@ -204,7 +243,7 @@ async def student_streak(
             Attendance.status == AttendanceStatus.present,
         )
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
     )
     present = present_count.scalar() or 0
 
@@ -215,7 +254,7 @@ async def student_streak(
             Attendance.status == AttendanceStatus.excused,
         )
         .join(Session)
-        .where(Session.is_confirmed == True)
+        .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
     )
     excused = result.scalar() or 0
 
@@ -237,13 +276,20 @@ async def attendance_grid(
     circle_id: int | None = Query(default=None),
     limit: int | None = Query(default=None),
     session_ids: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user_depends),
+    context: TenantContext = Depends(get_tenant_context),
 ):
     # Get confirmed sessions ordered by date
     query = select(Session).where(Session.is_confirmed == True)
-    if circle_id:
-        query = query.where(Session.circle_id == circle_id)
+    query = query.where(Session.tahfiz_id == context.tahfiz_id)
+    if circle_id and circle_id != context.tahfiz_id:
+        raise HTTPException(status_code=404, detail="Tahfiz not found")
+    if date_from:
+        query = query.where(Session.date >= date_from)
+    if date_to:
+        query = query.where(Session.date <= date_to)
     if session_ids:
         parsed_ids = [int(s) for s in session_ids.split(",") if s.strip()]
         if parsed_ids:
@@ -261,6 +307,7 @@ async def attendance_grid(
             .options(selectinload(Student.sheikh))
             .where(
                 Student.sheikh_id == sheikh_id,
+                Student.tahfiz_id == context.tahfiz_id,
                 Student.status == StudentStatus.enrolled,
             )
             .order_by(Student.sort_order, Student.name)
@@ -273,6 +320,7 @@ async def attendance_grid(
             select(Student)
             .outerjoin(Sheikh)
             .options(selectinload(Student.sheikh))
+            .where(Student.status == StudentStatus.enrolled, Student.tahfiz_id == context.tahfiz_id)
             .order_by(Sheikh.name, Student.name)
         )
         students = result.scalars().all()
@@ -299,13 +347,7 @@ async def attendance_grid(
     )
     warning_counts = dict(warning_count_result.all())
 
-    circle_ids = {s.sheikh.circle_id for s in students if s.sheikh}
-    circle_max_warnings: dict[int, int] = {}
-    if circle_ids:
-        circle_result = await db.execute(
-            select(Circle.id, Circle.max_warnings).where(Circle.id.in_(circle_ids))
-        )
-        circle_max_warnings = dict(circle_result.all())
+    max_warnings = context.tahfiz.max_warnings
 
     # Build lookup: (student_id, session_id) -> status
     att_lookup: dict[tuple[int, int], str] = {}
@@ -324,7 +366,6 @@ async def attendance_grid(
             default_status = "لا ينطبق" if student.registration_date and student.registration_date > sess.date else "غياب"
             records[str(sess.id)] = att_lookup.get((sid, sess.id), default_status)
         next_warning_number = warning_counts.get(sid, 0) + 1
-        max_warnings = circle_max_warnings.get(student.sheikh.circle_id, 3) if student.sheikh else 3
         students_data.append({
             "id": sid,
             "name": student.name,
@@ -337,6 +378,6 @@ async def attendance_grid(
         })
 
     return {
-        "sessions": [{"id": s.id, "date": s.date.isoformat(), "circle_id": s.circle_id} for s in sessions],
+        "sessions": [{"id": s.id, "date": s.date.isoformat(), "circle_id": s.tahfiz_id, "tahfiz_id": s.tahfiz_id} for s in sessions],
         "students": students_data,
     }
