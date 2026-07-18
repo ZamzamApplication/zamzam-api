@@ -17,10 +17,7 @@ async def list_saved_filters(
 ):
     result = await db.execute(
         select(SavedFilter)
-        .where(
-            SavedFilter.user_id == context.user.id,
-            SavedFilter.tahfiz_id == context.tahfiz_id,
-        )
+        .where(SavedFilter.tahfiz_id == context.tahfiz_id)
         .order_by(SavedFilter.created_at.desc())
     )
     return [
@@ -52,7 +49,6 @@ async def update_saved_filter(
     result = await db.execute(
         select(SavedFilter).where(
             SavedFilter.id == filter_id,
-            SavedFilter.user_id == context.user.id,
             SavedFilter.tahfiz_id == context.tahfiz_id,
         )
     )
@@ -77,7 +73,6 @@ async def delete_saved_filter(
     result = await db.execute(
         select(SavedFilter).where(
             SavedFilter.id == filter_id,
-            SavedFilter.user_id == context.user.id,
             SavedFilter.tahfiz_id == context.tahfiz_id,
         )
     )
