@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,8 +87,8 @@ async def session_progress(
     context: TenantContext = Depends(get_tenant_context),
 ):
     if not context.tahfiz.progress_tracking_enabled:
-        return {"enabled": False, "entries": []}
-    session = await db.scalar(select(Session.id).where(
+        return {"enabled": False, "entries": [], "previous_entries": []}
+    session = await db.scalar(select(Session).where(
         Session.id == session_id,
         Session.tahfiz_id == context.tahfiz_id,
     ))
@@ -102,7 +102,36 @@ async def session_progress(
         )
         .order_by(QuranProgressEntry.student_id, QuranProgressEntry.category)
     )).scalars().all()
-    return {"enabled": True, "entries": [serialize_entry(entry) for entry in entries]}
+    ranked_previous = (
+        select(
+            QuranProgressEntry.id.label("entry_id"),
+            func.row_number().over(
+                partition_by=(QuranProgressEntry.student_id, QuranProgressEntry.category),
+                order_by=(Session.date.desc(), Session.id.desc(), QuranProgressEntry.updated_at.desc()),
+            ).label("row_number"),
+        )
+        .join(Session, Session.id == QuranProgressEntry.session_id)
+        .where(
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+            or_(
+                Session.date < session.date,
+                and_(Session.date == session.date, Session.id < session.id),
+            ),
+        )
+        .subquery()
+    )
+    previous_rows = (await db.execute(
+        select(QuranProgressEntry).where(
+            QuranProgressEntry.id.in_(
+                select(ranked_previous.c.entry_id).where(ranked_previous.c.row_number == 1)
+            )
+        )
+    )).scalars().all()
+    return {
+        "enabled": True,
+        "entries": [serialize_entry(entry) for entry in entries],
+        "previous_entries": [serialize_entry(entry) for entry in previous_rows],
+    }
 
 
 @router.post("/sessions/{session_id}/progress/batch")
