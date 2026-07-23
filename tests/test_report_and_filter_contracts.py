@@ -1,7 +1,7 @@
 import unittest
 from datetime import date, datetime
 
-from app.models import Tahfiz, TahfizStatus, User, UserRole
+from app.models import DEFAULT_ATTENDANCE_STATUSES, Tahfiz, TahfizStatus, User, UserRole, attendance_status_options
 from app.routers.auth import TenantContext
 from app.routers.reports import circle_attendance_rate
 from app.routers.saved_filters import create_saved_filter, list_saved_filters
@@ -98,6 +98,20 @@ class MonthlyReportContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(date_from, query_params)
         self.assertIn(date_to, query_params)
         self.assertEqual(response["total_attendance_records"], 0)
+
+
+class AttendanceStatusSettingsTests(unittest.TestCase):
+    def test_defaults_match_existing_attendance_options(self):
+        tahfiz = Tahfiz(name="Tenant", status=TahfizStatus.active)
+        self.assertEqual(attendance_status_options(tahfiz), DEFAULT_ATTENDANCE_STATUSES)
+
+    def test_custom_statuses_are_trimmed_and_preserve_order(self):
+        tahfiz = Tahfiz(
+            name="Tenant",
+            status=TahfizStatus.active,
+            attendance_statuses='[" حاضر ", "عن بعد"]',
+        )
+        self.assertEqual(attendance_status_options(tahfiz), ["حاضر", "عن بعد"])
 
 
 class SavedFilterTenantContractTests(unittest.IsolatedAsyncioTestCase):

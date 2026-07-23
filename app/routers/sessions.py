@@ -18,6 +18,7 @@ from app.models import (
     Sheikh,
     Student,
     StudentStatus,
+    attendance_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
 from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, UpdateSessionRequest
@@ -99,7 +100,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    if body.default_status not in [s.value for s in AttendanceStatus]:
+    if body.default_status not in attendance_status_options(context.tahfiz):
         raise HTTPException(status_code=400, detail=f"Invalid default status")
 
     session = Session(date=body.session_date, tahfiz_id=context.tahfiz_id)
@@ -139,7 +140,7 @@ async def create_session(
                 status = AttendanceStatus.not_applicable
                 notes = excused_weekday.note
             else:
-                status = AttendanceStatus(body.default_status)
+                status = body.default_status
         db.add(Attendance(
             session_id=session.id,
             student_id=s.id,
@@ -247,7 +248,7 @@ async def get_session_attendance(
             default_sheikh_id = s.sheikh_id
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id
             if att:
-                status = att.status.value
+                status = att.status
                 notes = att.notes if att.notes is not None else (excused_note if status == AttendanceStatus.not_applicable.value else None)
             else:
                 if s.registration_date and s.registration_date > session.date:

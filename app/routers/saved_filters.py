@@ -13,7 +13,7 @@ router = APIRouter(prefix="/saved-filters", tags=["saved-filters"])
 def serialize_filter(saved_filter: SavedFilter, context: TenantContext) -> dict:
     can_manage = (
         saved_filter.user_id == context.user.id
-        or context.user.role in (UserRole.admin, UserRole.super_admin)
+        or context.effective_role in (UserRole.admin, UserRole.super_admin)
     )
     return {
         "id": saved_filter.id,
@@ -70,7 +70,7 @@ async def update_saved_filter(
     sf = result.scalar_one_or_none()
     if not sf:
         raise HTTPException(status_code=404, detail="Saved filter not found")
-    if sf.user_id != context.user.id and context.user.role not in (UserRole.admin, UserRole.super_admin):
+    if sf.user_id != context.user.id and context.effective_role not in (UserRole.admin, UserRole.super_admin):
         raise HTTPException(status_code=403, detail="Only the creator or an admin can edit this filter")
 
     if body.name is not None:
@@ -96,7 +96,7 @@ async def delete_saved_filter(
     sf = result.scalar_one_or_none()
     if not sf:
         raise HTTPException(status_code=404, detail="Saved filter not found")
-    if sf.user_id != context.user.id and context.user.role not in (UserRole.admin, UserRole.super_admin):
+    if sf.user_id != context.user.id and context.effective_role not in (UserRole.admin, UserRole.super_admin):
         raise HTTPException(status_code=403, detail="Only the creator or an admin can delete this filter")
 
     db.add(AuditLog(

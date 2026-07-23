@@ -49,6 +49,8 @@ class TahfizOut(BaseModel):
     status: str = "pending"
     max_warnings: int = 3
     week_start_day: int = 6
+    month_start_day: int = 1
+    attendance_statuses: list[str] = ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"]
 
     class Config:
         from_attributes = True
@@ -222,6 +224,8 @@ class UpdateTahfizRequest(BaseModel):
     contact_phone: str | None = None
     max_warnings: int = 3
     week_start_day: int = 6
+    month_start_day: int = 1
+    attendance_statuses: list[str] | None = None
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None
@@ -256,6 +260,8 @@ class UpdateTahfizSettingsRequest(BaseModel):
     contact_phone: str | None = None
     max_warnings: int | None = None
     week_start_day: int | None = None
+    month_start_day: int | None = None
+    attendance_statuses: list[str] | None = None
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None
@@ -315,6 +321,23 @@ class UpdateUserRequest(BaseModel):
     password: str | None = None
     role: str | None = None
     sheikh_id: int | None = None
+
+
+class UpsertUserTahfizMembershipRequest(BaseModel):
+    tahfiz_id: int
+    role: str = "admin"
+    sheikh_id: int | None = None
+
+
+class CreateTahfizInvitationRequest(BaseModel):
+    role: str = "sheikh"
+    sheikh_id: int | None = None
+    expires_hours: int = Field(default=48, ge=1, le=168)
+
+
+class InvitationRegistrationRequest(BaseModel):
+    username: str
+    password: str
 
 
 class QuranRangeInput(BaseModel):

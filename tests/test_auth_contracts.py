@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from jose import jwt
 
 from app.config import settings
-from app.models import Tahfiz, TahfizStatus, User, UserRole
+from app.models import Tahfiz, TahfizStatus, User, UserRole, UserTahfizMembership
 from app.routers.auth import (
     TenantContext,
     create_access_token,
@@ -43,9 +43,22 @@ class _ScalarResult:
 
 
 class _TenantSession:
-    def __init__(self, tahfiz_by_id: dict[int, Tahfiz]):
+    def __init__(
+        self,
+        tahfiz_by_id: dict[int, Tahfiz],
+        memberships: dict[tuple[int, int], UserTahfizMembership] | None = None,
+    ):
         self.tahfiz_by_id = tahfiz_by_id
+        self.memberships = memberships or {}
         self.statements = []
+
+    async def scalar(self, statement):
+        self.statements.append(statement)
+        params = list(statement.compile().params.values())
+        user_id = next((value for value in params if isinstance(value, int) and value == 1), None)
+        tahfiz_ids = [value for value in params if isinstance(value, int) and value in self.tahfiz_by_id]
+        tahfiz_id = tahfiz_ids[-1] if tahfiz_ids else None
+        return self.memberships.get((user_id, tahfiz_id))
 
     async def execute(self, statement):
         self.statements.append(statement)
@@ -103,20 +116,60 @@ class RoleContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TenantContextTests(unittest.IsolatedAsyncioTestCase):
-    async def test_regular_user_cannot_override_tenant_with_support_header(self):
+    async def test_regular_user_cannot_select_tenant_without_membership(self):
         tenant_one = make_tahfiz(1)
         tenant_two = make_tahfiz(2)
         db = _TenantSession({1: tenant_one, 2: tenant_two})
         user = make_user(UserRole.admin, tahfiz_id=1)
 
+        with self.assertRaises(HTTPException) as raised:
+            await get_tenant_context(
+                current_user=user,
+                db=db,
+                support_tahfiz_id=2,
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_regular_user_can_select_explicit_membership(self):
+        tenant_one = make_tahfiz(1)
+        tenant_two = make_tahfiz(2)
+        membership = UserTahfizMembership(
+            id=8,
+            user_id=1,
+            tahfiz_id=2,
+            role=UserRole.admin,
+            is_active=True,
+        )
+        db = _TenantSession({1: tenant_one, 2: tenant_two}, {(1, 2): membership})
+
         context = await get_tenant_context(
-            current_user=user,
+            current_user=make_user(UserRole.admin, tahfiz_id=1),
             db=db,
             support_tahfiz_id=2,
         )
 
-        self.assertEqual(context.tahfiz_id, 1)
-        self.assertIs(context.tahfiz, tenant_one)
+        self.assertEqual(context.tahfiz_id, 2)
+        self.assertEqual(context.effective_role, UserRole.admin)
+
+    async def test_revoked_membership_is_rejected_immediately(self):
+        membership = UserTahfizMembership(
+            id=8,
+            user_id=1,
+            tahfiz_id=2,
+            role=UserRole.admin,
+            is_active=False,
+        )
+        db = _TenantSession({2: make_tahfiz(2)}, {(1, 2): membership})
+
+        with self.assertRaises(HTTPException) as raised:
+            await get_tenant_context(
+                current_user=make_user(UserRole.admin, tahfiz_id=1),
+                db=db,
+                support_tahfiz_id=2,
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
 
     async def test_super_admin_must_select_support_workspace(self):
         user = make_user(UserRole.super_admin, tahfiz_id=None)

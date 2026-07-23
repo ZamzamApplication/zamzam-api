@@ -56,6 +56,7 @@ async def list_circles(
             "description": context.tahfiz.description,
             "max_warnings": context.tahfiz.max_warnings,
             "week_start_day": context.tahfiz.week_start_day,
+            "month_start_day": context.tahfiz.month_start_day,
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
         }
     ]
@@ -359,7 +360,7 @@ async def attendance_grid(
     att_lookup: dict[tuple[int, int], str] = {}
     for att in attendance_records:
         if att.student_id is not None:
-            att_lookup[(att.student_id, att.session_id)] = att.status.value
+            att_lookup[(att.student_id, att.session_id)] = att.status
 
     # Build student grid data
     students_data = []

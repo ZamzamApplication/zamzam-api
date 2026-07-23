@@ -4,7 +4,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Attendance, AttendanceBatchOperation, AttendanceStatus, AuditLog, Session, Sheikh, Student
+from app.models import Attendance, AttendanceBatchOperation, AuditLog, Session, Sheikh, Student, attendance_status_options
 from app.routers.auth import TenantContext, get_tenant_context
 from app.schemas import AttendanceBatchRequest, UpdateAttendanceRequest, UpsertAttendanceRequest
 
@@ -18,8 +18,6 @@ async def update_attendance(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    if body.status not in [s.value for s in AttendanceStatus]:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {[s.value for s in AttendanceStatus]}")
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(
             Sheikh.id == body.sheikh_id,
@@ -35,6 +33,9 @@ async def update_attendance(
     attendance = result.scalar_one_or_none()
     if not attendance:
         raise HTTPException(status_code=404, detail="Attendance record not found")
+    allowed_statuses = attendance_status_options(context.tahfiz)
+    if body.status not in allowed_statuses and body.status != attendance.status:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed_statuses}")
     session = await db.scalar(select(Session).where(
         Session.id == attendance.session_id,
         Session.tahfiz_id == context.tahfiz_id,
@@ -42,14 +43,14 @@ async def update_attendance(
     if not session or session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
-    attendance.status = AttendanceStatus(body.status)
+    attendance.status = body.status
     if body.notes is not None:
         attendance.notes = body.notes
     if body.sheikh_id is not None:
         attendance.sheikh_id = body.sheikh_id
     session.version += 1
     await db.commit()
-    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes, "sheikh_id": attendance.sheikh_id, "version": session.version}
+    return {"id": attendance.id, "status": attendance.status, "notes": attendance.notes, "sheikh_id": attendance.sheikh_id, "version": session.version}
 
 
 @router.post("/upsert")
@@ -58,8 +59,6 @@ async def upsert_attendance(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    if body.status not in [s.value for s in AttendanceStatus]:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {[s.value for s in AttendanceStatus]}")
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(
             Sheikh.id == body.sheikh_id,
@@ -90,8 +89,12 @@ async def upsert_attendance(
     )
     attendance = result.scalar_one_or_none()
 
+    allowed_statuses = attendance_status_options(context.tahfiz)
+    if body.status not in allowed_statuses and (not attendance or body.status != attendance.status):
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed_statuses}")
+
     if attendance:
-        attendance.status = AttendanceStatus(body.status)
+        attendance.status = body.status
         if body.notes is not None:
             attendance.notes = body.notes
         if body.sheikh_id is not None:
@@ -101,7 +104,7 @@ async def upsert_attendance(
             session_id=body.session_id,
             student_id=body.student_id,
             tahfiz_id=context.tahfiz_id,
-            status=AttendanceStatus(body.status),
+            status=body.status,
             notes=body.notes,
             sheikh_id=body.sheikh_id,
         )
@@ -110,7 +113,7 @@ async def upsert_attendance(
     session.version += 1
     await db.commit()
     await db.refresh(attendance)
-    return {"id": attendance.id, "status": attendance.status.value, "notes": attendance.notes, "session_id": attendance.session_id, "student_id": attendance.student_id, "sheikh_id": attendance.sheikh_id, "version": session.version}
+    return {"id": attendance.id, "status": attendance.status, "notes": attendance.notes, "session_id": attendance.session_id, "student_id": attendance.student_id, "sheikh_id": attendance.sheikh_id, "version": session.version}
 
 
 @router.post("/batch")
@@ -192,14 +195,22 @@ async def batch_attendance(
             detail={"code": "session_version_conflict", "current_version": current_version},
         )
 
+    existing_statuses = dict((await db.execute(
+        select(Attendance.student_id, Attendance.status).where(
+            Attendance.session_id == body.session_id,
+            Attendance.student_id.in_(student_ids),
+            Attendance.tahfiz_id == context.tahfiz_id,
+        )
+    )).all())
+    allowed_statuses = attendance_status_options(context.tahfiz)
     for item in body.updates:
-        if item.status not in [status.value for status in AttendanceStatus]:
+        if item.status not in allowed_statuses and existing_statuses.get(item.student_id) != item.status:
             raise HTTPException(status_code=400, detail=f"Invalid attendance status: {item.status}")
         values = {
             "session_id": body.session_id,
             "student_id": item.student_id,
             "tahfiz_id": context.tahfiz_id,
-            "status": AttendanceStatus(item.status),
+            "status": item.status,
             "notes": item.notes,
             "sheikh_id": item.sheikh_id,
         }

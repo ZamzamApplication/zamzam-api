@@ -1,4 +1,5 @@
 import enum
+import json
 from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
@@ -20,6 +21,20 @@ class AttendanceStatus(str, enum.Enum):
     absent = "غياب"  # noqa: F821
     excused = "غياب بعذر"  # noqa: F821
     not_applicable = "لا ينطبق"  # noqa: F821
+
+
+DEFAULT_ATTENDANCE_STATUSES = [status.value for status in AttendanceStatus]
+
+
+def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
+    try:
+        values = json.loads(tahfiz.attendance_statuses)
+    except (TypeError, ValueError):
+        return DEFAULT_ATTENDANCE_STATUSES.copy()
+    if not isinstance(values, list):
+        return DEFAULT_ATTENDANCE_STATUSES.copy()
+    normalized = [value.strip() for value in values if isinstance(value, str) and value.strip()]
+    return normalized or DEFAULT_ATTENDANCE_STATUSES.copy()
 
 
 class UserRole(str, enum.Enum):
@@ -73,8 +88,15 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
+    default_tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True)
 
     tahfiz: Mapped["Tahfiz | None"] = relationship("Tahfiz", foreign_keys=[tahfiz_id], back_populates="users")
+    memberships: Mapped[list["UserTahfizMembership"]] = relationship(
+        "UserTahfizMembership",
+        foreign_keys="UserTahfizMembership.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class Tahfiz(Base):
@@ -87,6 +109,12 @@ class Tahfiz(Base):
     status: Mapped[TahfizStatus] = mapped_column(Enum(TahfizStatus), default=TahfizStatus.pending, nullable=False, index=True)
     max_warnings: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     week_start_day: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
+    month_start_day: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    attendance_statuses: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_ATTENDANCE_STATUSES, ensure_ascii=False),
+        nullable=False,
+    )
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -99,6 +127,11 @@ class Tahfiz(Base):
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
     users: Mapped[list["User"]] = relationship("User", foreign_keys=[User.tahfiz_id], back_populates="tahfiz")
+    memberships: Mapped[list["UserTahfizMembership"]] = relationship(
+        "UserTahfizMembership",
+        back_populates="tahfiz",
+        cascade="all, delete-orphan",
+    )
 
 
 class Sheikh(Base):
@@ -113,6 +146,49 @@ class Sheikh(Base):
     tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="sheikhs")
     students: Mapped[list["Student"]] = relationship("Student", back_populates="sheikh", foreign_keys="[Student.sheikh_id]")
     user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
+
+
+class UserTahfizMembership(Base):
+    __tablename__ = "user_tahfiz_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "tahfiz_id", name="uq_user_tahfiz_membership"),
+        Index("ix_user_tahfiz_memberships_tahfiz_role", "tahfiz_id", "role", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id], back_populates="memberships")
+    tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="memberships")
+    sheikh: Mapped[Sheikh | None] = relationship("Sheikh")
+
+
+class TahfizInvitation(Base):
+    __tablename__ = "tahfiz_invitations"
+    __table_args__ = (
+        Index("ix_tahfiz_invitations_tahfiz_status", "tahfiz_id", "used_at", "revoked_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
+    sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
+    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    tahfiz: Mapped[Tahfiz] = relationship("Tahfiz")
+    sheikh: Mapped[Sheikh | None] = relationship("Sheikh")
 
 
 class ExcusedWeekday(Base):
@@ -215,7 +291,8 @@ class Attendance(Base):
     student_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("students.id"), nullable=True)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
-    status: Mapped[AttendanceStatus] = mapped_column(Enum(AttendanceStatus), default=AttendanceStatus.absent, nullable=False)
+    # This is intentionally a string: each Tahfiz can configure its own options.
+    status: Mapped[str] = mapped_column(String(100), default=AttendanceStatus.absent.value, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 import sqlite3
@@ -22,7 +23,7 @@ from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
 from app.media import signed_media_url
-from app.models import Attendance, AuditLog, ExcusedWeekday, ParentPhone, ParentType, QuranProgressEntry, SavedFilter, Session, Sheikh, Student, StudentGoal, StudentStatus, StudentWarning, Tahfiz, User, UserRole
+from app.models import Attendance, AuditLog, ExcusedWeekday, ParentPhone, ParentType, QuranProgressEntry, SavedFilter, Session, Sheikh, Student, StudentGoal, StudentStatus, StudentWarning, Tahfiz, User, UserRole, UserTahfizMembership, attendance_status_options
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
     CreateParentPhone,
@@ -195,6 +196,7 @@ async def list_sheikhs(
             "circle_id": s.tahfiz_id,
             "circle_name": s.tahfiz.name,
             "week_start_day": s.tahfiz.week_start_day,
+            "month_start_day": s.tahfiz.month_start_day,
         }
         for s in sheikhs
     ]
@@ -876,6 +878,8 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "status": tahfiz.status.value,
         "max_warnings": tahfiz.max_warnings,
         "week_start_day": tahfiz.week_start_day,
+        "month_start_day": tahfiz.month_start_day,
+        "attendance_statuses": attendance_status_options(tahfiz),
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
@@ -909,6 +913,22 @@ async def update_tahfiz_settings(
         if tahfiz.week_start_day != body.week_start_day:
             tahfiz.week_start_day = body.week_start_day
             changed_fields.append("week_start_day")
+    if body.month_start_day is not None:
+        if not 1 <= body.month_start_day <= 28:
+            raise HTTPException(status_code=400, detail="Invalid month start day")
+        if tahfiz.month_start_day != body.month_start_day:
+            tahfiz.month_start_day = body.month_start_day
+            changed_fields.append("month_start_day")
+    if body.attendance_statuses is not None:
+        normalized_statuses = list(dict.fromkeys(status.strip() for status in body.attendance_statuses if status.strip()))
+        if not normalized_statuses:
+            raise HTTPException(status_code=400, detail="At least one attendance status is required")
+        if len(normalized_statuses) > 20 or any(len(status) > 50 for status in normalized_statuses):
+            raise HTTPException(status_code=400, detail="Invalid attendance statuses")
+        serialized_statuses = json.dumps(normalized_statuses, ensure_ascii=False)
+        if tahfiz.attendance_statuses != serialized_statuses:
+            tahfiz.attendance_statuses = serialized_statuses
+            changed_fields.append("attendance_statuses")
     if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
         tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
         changed_fields.append("progress_tracking_enabled")
@@ -962,14 +982,24 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(
-        User.tahfiz_id == context.tahfiz_id,
-        User.is_active == True,
-    ))
-    users = result.scalars().all()
+    result = await db.execute(
+        select(User, UserTahfizMembership)
+        .join(UserTahfizMembership, UserTahfizMembership.user_id == User.id)
+        .where(
+            UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+            UserTahfizMembership.is_active == True,
+            User.is_active == True,
+        )
+    )
+    rows = result.all()
     return [
-        {"id": u.id, "username": u.username, "role": u.role.value, "sheikh_id": u.sheikh_id}
-        for u in users
+        {
+            "id": user.id,
+            "username": user.username,
+            "role": membership.role.value,
+            "sheikh_id": membership.sheikh_id,
+        }
+        for user, membership in rows
     ]
 
 
@@ -995,8 +1025,18 @@ async def create_user(
         role=UserRole(body.role),
         sheikh_id=body.sheikh_id,
         tahfiz_id=context.tahfiz_id,
+        default_tahfiz_id=context.tahfiz_id,
     )
     db.add(user)
+    await db.flush()
+    db.add(UserTahfizMembership(
+        user_id=user.id,
+        tahfiz_id=context.tahfiz_id,
+        role=UserRole(body.role),
+        sheikh_id=body.sheikh_id,
+        is_active=True,
+        created_by_id=context.user.id,
+    ))
     await db.commit()
     return {"id": user.id, "username": user.username, "role": user.role.value, "sheikh_id": user.sheikh_id}
 
@@ -1008,10 +1048,19 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(User.id == user_id, User.tahfiz_id == context.tahfiz_id))
-    user = result.scalar_one_or_none()
-    if not user:
+    result = await db.execute(
+        select(User, UserTahfizMembership)
+        .join(UserTahfizMembership, UserTahfizMembership.user_id == User.id)
+        .where(
+            User.id == user_id,
+            UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+            UserTahfizMembership.is_active == True,
+        )
+    )
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="User not found")
+    user, membership = row
 
     if body.username is not None:
         user.username = body.username
@@ -1022,20 +1071,25 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Invalid tenant role")
         if user.id == context.tahfiz.owner_user_id and body.role != UserRole.admin.value:
             raise HTTPException(status_code=409, detail="Transfer ownership before demoting the owner")
-        if user.role == UserRole.admin and body.role != UserRole.admin.value:
-            admin_count = await db.scalar(select(func.count(User.id)).where(
-                User.tahfiz_id == context.tahfiz_id,
-                User.role == UserRole.admin,
+        if membership.role == UserRole.admin and body.role != UserRole.admin.value:
+            admin_count = await db.scalar(select(func.count(UserTahfizMembership.id)).where(
+                UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+                UserTahfizMembership.role == UserRole.admin,
+                UserTahfizMembership.is_active == True,
             ))
             if (admin_count or 0) <= 1:
                 raise HTTPException(status_code=409, detail="A Tahfiz must keep at least one admin")
-        user.role = UserRole(body.role)
+        membership.role = UserRole(body.role)
+        if user.tahfiz_id == context.tahfiz_id:
+            user.role = UserRole(body.role)
     if "sheikh_id" in body.model_fields_set:
         if body.sheikh_id is not None:
             sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
             if not sheikh:
                 raise HTTPException(status_code=404, detail="Sheikh not found")
-        user.sheikh_id = body.sheikh_id
+        membership.sheikh_id = body.sheikh_id
+        if user.tahfiz_id == context.tahfiz_id:
+            user.sheikh_id = body.sheikh_id
 
     db.add(AuditLog(
         actor_user_id=context.user.id,
@@ -1044,7 +1098,12 @@ async def update_user(
         details=f"user={user.id}",
     ))
     await db.commit()
-    return {"id": user.id, "username": user.username, "role": user.role.value, "sheikh_id": user.sheikh_id}
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": membership.role.value,
+        "sheikh_id": membership.sheikh_id,
+    }
 
 
 @router.delete("/users/{user_id}")
@@ -1053,10 +1112,19 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(User).where(User.id == user_id, User.tahfiz_id == context.tahfiz_id))
-    user = result.scalar_one_or_none()
-    if not user:
+    result = await db.execute(
+        select(User, UserTahfizMembership)
+        .join(UserTahfizMembership, UserTahfizMembership.user_id == User.id)
+        .where(
+            User.id == user_id,
+            UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+            UserTahfizMembership.is_active == True,
+        )
+    )
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="User not found")
+    user, membership = row
     if user.id in (context.user.id, context.tahfiz.owner_user_id):
         raise HTTPException(status_code=400, detail="The owner or current user cannot be deleted")
     await db.execute(sa_update(SavedFilter).where(
@@ -1069,8 +1137,20 @@ async def delete_user(
         action="user.access_revoked",
         details=f"user={user.id}; username={user.username}",
     ))
-    user.is_active = False
-    user.sheikh_id = None
+    membership.is_active = False
+    next_membership = await db.scalar(select(UserTahfizMembership).where(
+        UserTahfizMembership.user_id == user.id,
+        UserTahfizMembership.is_active == True,
+        UserTahfizMembership.id != membership.id,
+    ).order_by(UserTahfizMembership.id))
+    if next_membership:
+        if user.default_tahfiz_id == context.tahfiz_id:
+            user.default_tahfiz_id = next_membership.tahfiz_id
+    else:
+        user.is_active = False
+        user.default_tahfiz_id = None
+    if user.tahfiz_id == context.tahfiz_id:
+        user.sheikh_id = None
     await db.commit()
     return {"message": "تم إلغاء وصول المستخدم"}
 
@@ -1133,11 +1213,19 @@ def build_tenant_database(source_path: str, tahfiz_id: int) -> str:
             ("sessions", "DELETE FROM sessions WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("saved_filters", "DELETE FROM saved_filters WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("audit_logs", "DELETE FROM audit_logs WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("tahfiz_invitations", "DELETE FROM tahfiz_invitations WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("parent_phones", "DELETE FROM parent_phones WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
             ("student_warnings", "DELETE FROM student_warnings WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
             ("excused_weekdays", "DELETE FROM excused_weekdays WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
             ("students", "DELETE FROM students WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("users", "DELETE FROM users WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("user_tahfiz_memberships", "DELETE FROM user_tahfiz_memberships WHERE tahfiz_id != ?", (tahfiz_id,)),
+            (
+                "users",
+                "DELETE FROM users WHERE id NOT IN "
+                "(SELECT user_id FROM user_tahfiz_memberships WHERE tahfiz_id = ?) "
+                "AND (tahfiz_id IS NULL OR tahfiz_id != ?)",
+                (tahfiz_id, tahfiz_id),
+            ),
             ("sheikhs", "DELETE FROM sheikhs WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("tahfiz", "DELETE FROM tahfiz WHERE id != ?", (tahfiz_id,)),
         ]
@@ -1183,7 +1271,11 @@ async def export_tahfiz(
     students = (await db.execute(select(Student).where(Student.tahfiz_id == tahfiz_id))).scalars().all()
     sessions = (await db.execute(select(Session).where(Session.tahfiz_id == tahfiz_id))).scalars().all()
     attendance = (await db.execute(select(Attendance).where(Attendance.tahfiz_id == tahfiz_id))).scalars().all()
-    users = (await db.execute(select(User).where(User.tahfiz_id == tahfiz_id))).scalars().all()
+    user_rows = (await db.execute(
+        select(User, UserTahfizMembership)
+        .join(UserTahfizMembership, UserTahfizMembership.user_id == User.id)
+        .where(UserTahfizMembership.tahfiz_id == tahfiz_id)
+    )).all()
     student_ids = [student.id for student in students]
     parent_phones = (await db.execute(select(ParentPhone).where(ParentPhone.student_id.in_(student_ids)))).scalars().all() if student_ids else []
     warnings = (await db.execute(select(StudentWarning).where(StudentWarning.student_id.in_(student_ids)))).scalars().all() if student_ids else []
@@ -1193,7 +1285,16 @@ async def export_tahfiz(
         "format": "zamzam-tahfiz-export-v1",
         "exported_at": datetime.utcnow().isoformat(),
         "tahfiz": serialize_tahfiz(context.tahfiz),
-        "users": [{"id": row.id, "username": row.username, "role": row.role.value, "sheikh_id": row.sheikh_id} for row in users],
+        "users": [
+            {
+                "id": user.id,
+                "username": user.username,
+                "role": membership.role.value,
+                "sheikh_id": membership.sheikh_id,
+                "is_active": membership.is_active,
+            }
+            for user, membership in user_rows
+        ],
         "sheikhs": [{"id": row.id, "name": row.name, "phone": row.phone, "whatsapp_group_id": row.whatsapp_group_id} for row in sheikhs],
         "students": [{
             "id": row.id, "name": row.name, "phone": row.phone, "student_id": row.student_id,
@@ -1204,7 +1305,7 @@ async def export_tahfiz(
         "sessions": [{"id": row.id, "date": row.date.isoformat(), "is_confirmed": row.is_confirmed} for row in sessions],
         "attendance": [{
             "id": row.id, "session_id": row.session_id, "student_id": row.student_id,
-            "sheikh_id": row.sheikh_id, "status": row.status.value, "notes": row.notes,
+            "sheikh_id": row.sheikh_id, "status": row.status, "notes": row.notes,
         } for row in attendance],
         "parent_phones": [{
             "id": row.id, "student_id": row.student_id, "phone_number": row.phone_number,

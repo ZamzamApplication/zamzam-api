@@ -166,6 +166,21 @@ async def migrate():
         if "sheikh_id" not in att_columns:
             await conn.execute(text("ALTER TABLE attendance ADD COLUMN sheikh_id INTEGER REFERENCES sheikhs(id)"))
 
+        # SQLAlchemy's former Enum mapping stored enum member names in SQLite.
+        # Attendance statuses are now tenant-configurable strings, so promote
+        # those legacy keys to the Arabic labels users have always seen.
+        await conn.execute(text("""
+            UPDATE attendance
+            SET status = CASE status
+                WHEN 'present' THEN 'حاضر'
+                WHEN 'absent' THEN 'غياب'
+                WHEN 'excused' THEN 'غياب بعذر'
+                WHEN 'not_applicable' THEN 'لا ينطبق'
+                ELSE status
+            END
+            WHERE status IN ('present', 'absent', 'excused', 'not_applicable')
+        """))
+
         # — Add notes to excused weekdays —
         result = await conn.execute(text("PRAGMA table_info(excused_weekdays)"))
         excused_weekday_columns = {row[1] for row in result.fetchall()}
@@ -242,6 +257,8 @@ async def migrate():
                 )
                 WHERE sheikh_id IS NOT NULL
             """))
+        if "default_tahfiz_id" not in user_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN default_tahfiz_id INTEGER REFERENCES tahfiz(id)"))
         # Legacy tenant administrators were not necessarily linked to a
         # sheikh, so derive their workspace from the original single tenant.
         await conn.execute(text("""
@@ -251,6 +268,70 @@ async def migrate():
         """))
         await conn.execute(text(
             "UPDATE users SET role = 'super_admin' WHERE username = 'admin' AND tahfiz_id IS NULL"
+        ))
+        await conn.execute(text("""
+            UPDATE users
+            SET default_tahfiz_id = tahfiz_id
+            WHERE default_tahfiz_id IS NULL AND tahfiz_id IS NOT NULL
+        """))
+
+        # — Promote one-user/one-Tahfiz access to explicit memberships —
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_tahfiz_memberships (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                tahfiz_id INTEGER NOT NULL REFERENCES tahfiz(id),
+                role VARCHAR(20) NOT NULL,
+                sheikh_id INTEGER REFERENCES sheikhs(id),
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_by_id INTEGER REFERENCES users(id),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_user_tahfiz_membership UNIQUE (user_id, tahfiz_id)
+            )
+        """))
+        await conn.execute(text("""
+            INSERT OR IGNORE INTO user_tahfiz_memberships
+                (user_id, tahfiz_id, role, sheikh_id, is_active, created_at)
+            SELECT id, tahfiz_id, role, sheikh_id, is_active, CURRENT_TIMESTAMP
+            FROM users
+            WHERE tahfiz_id IS NOT NULL AND role IN ('admin', 'sheikh')
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_user_tahfiz_memberships_user_id "
+            "ON user_tahfiz_memberships(user_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_user_tahfiz_memberships_tahfiz_id "
+            "ON user_tahfiz_memberships(tahfiz_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_user_tahfiz_memberships_tahfiz_role "
+            "ON user_tahfiz_memberships(tahfiz_id, role, is_active)"
+        ))
+
+        # — Single-use, expiring Tahfiz invitations —
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tahfiz_invitations (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                tahfiz_id INTEGER NOT NULL REFERENCES tahfiz(id),
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                role VARCHAR(20) NOT NULL,
+                sheikh_id INTEGER REFERENCES sheikhs(id),
+                created_by_id INTEGER NOT NULL REFERENCES users(id),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME,
+                used_by_id INTEGER REFERENCES users(id),
+                revoked_at DATETIME
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tahfiz_invitations_token_hash "
+            "ON tahfiz_invitations(token_hash)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_tahfiz_invitations_tahfiz_status "
+            "ON tahfiz_invitations(tahfiz_id, used_at, revoked_at, expires_at)"
         ))
 
         # — Migrate sheikh_id + sort_order from student_sheikhs to students —
@@ -339,6 +420,13 @@ async def migrate():
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN max_warnings INTEGER NOT NULL DEFAULT 3"))
         if "week_start_day" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN week_start_day INTEGER NOT NULL DEFAULT 6"))
+        if "month_start_day" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN month_start_day INTEGER NOT NULL DEFAULT 1"))
+        if "attendance_statuses" not in tahfiz_columns:
+            default_statuses = '["حاضر", "غياب", "غياب بعذر", "لا ينطبق"]'
+            await conn.execute(text(
+                f"ALTER TABLE tahfiz ADD COLUMN attendance_statuses TEXT NOT NULL DEFAULT '{default_statuses}'"
+            ))
         if "contact_phone" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN contact_phone VARCHAR(20)"))
         if "status" not in tahfiz_columns:
