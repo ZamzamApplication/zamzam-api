@@ -19,6 +19,7 @@ primary_region = "ams"
 [[mounts]]
   source = "zamzam_data"
   destination = "/data"
+  snapshot_retention = 30
 
 [[vm]]
   cpu_kind = "shared"

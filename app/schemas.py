@@ -329,6 +329,10 @@ class UpsertUserTahfizMembershipRequest(BaseModel):
     sheikh_id: int | None = None
 
 
+class SetDefaultTahfizRequest(BaseModel):
+    tahfiz_id: int
+
+
 class CreateTahfizInvitationRequest(BaseModel):
     role: str = "sheikh"
     sheikh_id: int | None = None

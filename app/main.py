@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -10,11 +11,13 @@ from app.config import settings
 from sqlalchemy import text
 
 from app.database import async_session, init_db
+from app.backup_scheduler import backup_loop
 from app.media import validate_media_token
 from app.routers import auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations
 from app.seed import seed_data
 
 logger = logging.getLogger(__name__)
+backup_task: asyncio.Task | None = None
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -58,6 +61,7 @@ async def serve_upload(filepath: str, token: str):
 
 @app.on_event("startup")
 async def startup():
+    global backup_task
     production = settings.APP_ENV.lower() == "production" or bool(os.getenv("FLY_APP_NAME"))
     security_issues = settings.security_issues()
     if security_issues and production:
@@ -67,6 +71,17 @@ async def startup():
         logger.critical("%s. Set STRICT_SECURITY_VALIDATION=true after correcting it.", message)
     await init_db()
     await seed_data()
+    backup_task = asyncio.create_task(backup_loop(), name="sqlite-backup-loop")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if backup_task:
+        backup_task.cancel()
+        try:
+            await backup_task
+        except asyncio.CancelledError:
+            pass
 
 
 @app.get("/health")

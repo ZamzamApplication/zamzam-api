@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     UPLOAD_DIR: str = "./uploads"
     BACKUP_DIR: str = "./backups"
+    BACKUP_INTERVAL_HOURS: int = 24
+    BACKUP_RETENTION_DAYS: int = 14
     CORS_ORIGINS: str = "https://zamzam-web.fly.dev,http://localhost:3000,http://127.0.0.1:3000"
 
     WHATSEND_API_URL: str = "http://localhost:8000/api/send"

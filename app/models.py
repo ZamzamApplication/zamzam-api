@@ -354,6 +354,24 @@ class QuranProgressEntry(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class QuranProgressRevision(Base):
+    __tablename__ = "quran_progress_revisions"
+    __table_args__ = (
+        Index("ix_progress_revision_tahfiz_student_created", "tahfiz_id", "student_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    progress_entry_id: Mapped[int] = mapped_column(Integer, ForeignKey("quran_progress_entries.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    editor_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    before_json: Mapped[str] = mapped_column(Text, nullable=False)
+    after_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class StudentGoal(Base):
     __tablename__ = "student_goals"
     __table_args__ = (

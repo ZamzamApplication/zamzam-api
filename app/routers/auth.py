@@ -21,7 +21,7 @@ from app.models import (
     UserTahfizMembership,
     attendance_status_options,
 )
-from app.schemas import LoginRequest, SignupRequest, Token
+from app.schemas import LoginRequest, SetDefaultTahfizRequest, SignupRequest, Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer()
@@ -381,3 +381,30 @@ async def get_me(
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),
     }
+
+
+@router.post("/default-tahfiz")
+async def set_default_tahfiz(
+    body: SetDefaultTahfizRequest,
+    user: User = Depends(get_current_user_depends),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.role == UserRole.super_admin:
+        raise HTTPException(status_code=409, detail="Platform administrators use support workspaces")
+    membership = await db.scalar(select(UserTahfizMembership).where(
+        UserTahfizMembership.user_id == user.id,
+        UserTahfizMembership.tahfiz_id == body.tahfiz_id,
+        UserTahfizMembership.is_active == True,
+    ))
+    tahfiz = await db.get(Tahfiz, body.tahfiz_id)
+    if not membership or not tahfiz or tahfiz.status != TahfizStatus.active:
+        raise HTTPException(status_code=404, detail="Active Tahfiz membership not found")
+    user.default_tahfiz_id = body.tahfiz_id
+    db.add(AuditLog(
+        actor_user_id=user.id,
+        tahfiz_id=body.tahfiz_id,
+        action="membership.default_changed",
+        details=f"default_tahfiz_id={body.tahfiz_id}",
+    ))
+    await db.commit()
+    return {"tahfiz_id": body.tahfiz_id, "message": "Default Tahfiz updated"}

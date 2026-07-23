@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,12 +11,14 @@ from app.models import (
     AuditLog,
     ProgressCategory,
     QuranProgressEntry,
+    QuranProgressRevision,
     QuranRangeType,
     Session,
     Sheikh,
     Student,
     StudentGoal,
     StudentGoalStatus,
+    User,
 )
 from app.routers.auth import TenantContext, get_tenant_context
 from app.schemas import (
@@ -57,6 +60,23 @@ def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None)
         "created_at": entry.created_at.isoformat(),
         "updated_at": entry.updated_at.isoformat(),
         "session_date": session_date.isoformat() if session_date else None,
+    }
+
+
+def progress_snapshot(entry_or_item) -> dict:
+    range_type = entry_or_item.range_type
+    return {
+        "range_type": range_type.value if hasattr(range_type, "value") else range_type,
+        "from_surah": entry_or_item.from_surah,
+        "from_ayah": entry_or_item.from_ayah,
+        "to_surah": entry_or_item.to_surah,
+        "to_ayah": entry_or_item.to_ayah,
+        "from_page": entry_or_item.from_page,
+        "to_page": entry_or_item.to_page,
+        "quality_score": entry_or_item.quality_score,
+        "mistakes": entry_or_item.mistakes,
+        "notes": entry_or_item.notes,
+        "next_assignment": entry_or_item.next_assignment,
     }
 
 
@@ -168,6 +188,16 @@ async def save_session_progress(
         if valid_sheikhs != sheikh_ids:
             raise HTTPException(status_code=404, detail="One or more sheikhs were not found")
 
+    existing_entries = (await db.execute(select(QuranProgressEntry).where(
+        QuranProgressEntry.session_id == session_id,
+        QuranProgressEntry.student_id.in_(student_ids),
+        QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+    ))).scalars().all()
+    existing_by_key = {
+        (entry.student_id, entry.category.value): entry
+        for entry in existing_entries
+    }
+    changed_records: list[dict] = []
     for item in body.updates:
         try:
             category = ProgressCategory(item.category)
@@ -194,6 +224,27 @@ async def save_session_progress(
             "next_assignment": item.next_assignment,
             "updated_at": datetime.utcnow(),
         }
+        existing = existing_by_key.get((item.student_id, category.value))
+        before = progress_snapshot(existing) if existing else None
+        after = progress_snapshot(item)
+        if existing and before != after:
+            db.add(QuranProgressRevision(
+                tahfiz_id=context.tahfiz_id,
+                progress_entry_id=existing.id,
+                session_id=session_id,
+                student_id=item.student_id,
+                category=category,
+                editor_user_id=context.user.id,
+                before_json=json.dumps(before, ensure_ascii=False, sort_keys=True),
+                after_json=json.dumps(after, ensure_ascii=False, sort_keys=True),
+            ))
+            changed_records.append({
+                "entry_id": existing.id,
+                "student_id": item.student_id,
+                "category": category.value,
+                "before": before,
+                "after": after,
+            })
         statement = sqlite_insert(QuranProgressEntry).values(**values)
         statement = statement.on_conflict_do_update(
             index_elements=["session_id", "student_id", "category"],
@@ -205,7 +256,11 @@ async def save_session_progress(
         actor_user_id=context.user.id,
         tahfiz_id=context.tahfiz_id,
         action="quran_progress.batch_updated",
-        details=f"session={session_id}; records={len(body.updates)}",
+        details=json.dumps({
+            "session_id": session_id,
+            "records": len(body.updates),
+            "changed": changed_records,
+        }, ensure_ascii=False, sort_keys=True),
     ))
     await db.commit()
     return {"session_id": session_id, "saved": len(body.updates)}
@@ -218,7 +273,7 @@ async def student_progress(
     context: TenantContext = Depends(get_tenant_context),
 ):
     if not context.tahfiz.progress_tracking_enabled:
-        return {"enabled": False, "entries": [], "goals": [], "average_quality": 0, "trend": []}
+        return {"enabled": False, "entries": [], "goals": [], "average_quality": 0, "trend": [], "revisions": []}
     student = await db.scalar(select(Student.id).where(
         Student.id == student_id,
         Student.tahfiz_id == context.tahfiz_id,
@@ -246,6 +301,16 @@ async def student_progress(
         .where(StudentGoal.student_id == student_id, StudentGoal.tahfiz_id == context.tahfiz_id)
         .order_by(StudentGoal.created_at.desc())
     )).scalars().all()
+    revisions = (await db.execute(
+        select(QuranProgressRevision, User.username)
+        .join(User, User.id == QuranProgressRevision.editor_user_id)
+        .where(
+            QuranProgressRevision.student_id == student_id,
+            QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+        )
+        .order_by(QuranProgressRevision.created_at.desc())
+        .limit(50)
+    )).all()
     average = round(sum(entry.quality_score for entry in entries) / len(entries), 1) if entries else 0
     return {
         "enabled": True,
@@ -262,6 +327,20 @@ async def student_progress(
             }
             for entry in reversed(entries[:12])
             if entry.session_id in session_dates
+        ],
+        "revisions": [
+            {
+                "id": revision.id,
+                "progress_entry_id": revision.progress_entry_id,
+                "session_id": revision.session_id,
+                "category": revision.category.value,
+                "editor_user_id": revision.editor_user_id,
+                "editor_username": username,
+                "before": json.loads(revision.before_json),
+                "after": json.loads(revision.after_json),
+                "created_at": revision.created_at.isoformat(),
+            }
+            for revision, username in revisions
         ],
     }
 
@@ -365,8 +444,21 @@ async def progress_report(
     if date_to:
         student_query = student_query.where(Session.date <= date_to)
         category_query = category_query.where(Session.date <= date_to)
+    latest_query = (
+        select(QuranProgressEntry, Session.date)
+        .join(Session, Session.id == QuranProgressEntry.session_id)
+        .where(QuranProgressEntry.tahfiz_id == context.tahfiz_id)
+        .order_by(Session.date.desc(), QuranProgressEntry.updated_at.desc())
+    )
+    if date_from:
+        latest_query = latest_query.where(Session.date >= date_from)
+    if date_to:
+        latest_query = latest_query.where(Session.date <= date_to)
     rows = (await db.execute(student_query)).all()
     category_rows = (await db.execute(category_query)).all()
+    latest_by_student: dict[int, dict] = {}
+    for entry, session_date in (await db.execute(latest_query)).all():
+        latest_by_student.setdefault(entry.student_id, serialize_entry(entry, session_date))
     return {
         "enabled": True,
         "students": [
@@ -376,6 +468,7 @@ async def progress_report(
                 "entries": count,
                 "average_quality": round(float(average or 0), 1),
                 "mistakes": mistakes or 0,
+                "latest_entry": latest_by_student.get(student_id),
             }
             for student_id, name, count, average, mistakes in rows
         ],

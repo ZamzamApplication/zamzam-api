@@ -354,3 +354,46 @@ async def revoke_invitation(
         ))
         await db.commit()
     return {"message": "Invitation revoked"}
+
+
+@router.post("/{invitation_id}/resend")
+async def resend_invitation(
+    invitation_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    invitation = await db.scalar(select(TahfizInvitation).where(
+        TahfizInvitation.id == invitation_id,
+        TahfizInvitation.tahfiz_id == context.tahfiz_id,
+    ))
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    if invitation.used_at:
+        raise HTTPException(status_code=409, detail="Used invitations cannot be resent")
+    invitation.revoked_at = invitation.revoked_at or utcnow()
+    raw_token = secrets.token_urlsafe(32)
+    replacement = TahfizInvitation(
+        tahfiz_id=context.tahfiz_id,
+        token_hash=invitation_token_hash(raw_token),
+        role=invitation.role,
+        sheikh_id=invitation.sheikh_id,
+        created_by_id=context.user.id,
+        expires_at=utcnow() + timedelta(hours=48),
+    )
+    db.add(replacement)
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="invitation.resent",
+        details=f"previous={invitation.id}; role={invitation.role.value}; sheikh={invitation.sheikh_id}",
+    ))
+    await db.commit()
+    await db.refresh(replacement)
+    sheikh = await db.get(Sheikh, invitation.sheikh_id) if invitation.sheikh_id else None
+    result = serialize_invitation(
+        replacement,
+        context.user.username,
+        sheikh.name if sheikh else None,
+    )
+    result.update({"token": raw_token, "path": f"/invite/{raw_token}"})
+    return result

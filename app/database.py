@@ -537,10 +537,10 @@ async def migrate():
 
 
 async def init_db():
-    await migrate_legacy_circle_names()
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.execute(text("PRAGMA busy_timeout=5000"))
         await conn.execute(text("PRAGMA foreign_keys=ON"))
-        await conn.run_sync(Base.metadata.create_all)
-    await migrate()
+        # Schema changes are owned by Alembic and run before the application
+        # process starts. Startup only applies connection-level safeguards.
+        await conn.execute(text("SELECT 1"))
