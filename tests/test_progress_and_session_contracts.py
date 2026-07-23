@@ -78,6 +78,33 @@ class QuranRangeValidationTests(unittest.TestCase):
                 quality_score=4,
             )
 
+    def test_progress_accepts_a_range_across_multiple_surahs(self):
+        progress = QuranProgressItem(
+            student_id=1,
+            category="new_memorization",
+            range_type="surah_ayah",
+            from_surah=2,
+            from_ayah=250,
+            to_surah=3,
+            to_ayah=20,
+            quality_score=4,
+        )
+
+        self.assertEqual((progress.to_surah, progress.to_ayah), (3, 20))
+
+    def test_reversed_surah_range_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            QuranProgressItem(
+                student_id=1,
+                category="new_memorization",
+                range_type="surah_ayah",
+                from_surah=3,
+                from_ayah=20,
+                to_surah=2,
+                to_ayah=250,
+                quality_score=4,
+            )
+
     def test_progress_quality_is_limited_to_five(self):
         with self.assertRaises(ValidationError):
             QuranProgressItem(
