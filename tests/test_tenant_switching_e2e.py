@@ -167,3 +167,75 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
         statuses = {item["id"]: item["status"] for item in listed.json()}
         self.assertEqual(statuses[created.json()["id"]], "revoked")
         self.assertEqual(statuses[resent.json()["id"]], "active")
+
+    async def test_mobile_bootstrap_is_bounded_to_selected_tenant(self):
+        first = await self.client.get(
+            "/sync/v1/bootstrap",
+            headers={**self.headers, "X-Tahfiz-ID": "1"},
+        )
+        second = await self.client.get(
+            "/sync/v1/bootstrap",
+            headers={**self.headers, "X-Tahfiz-ID": "2"},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()["tahfiz"]["id"], 1)
+        self.assertEqual(second.json()["tahfiz"]["id"], 2)
+        self.assertEqual([row["id"] for row in first.json()["students"]], [101])
+        self.assertEqual([row["id"] for row in second.json()["students"]], [102])
+        self.assertEqual([row["id"] for row in first.json()["sessions"]], [201])
+        self.assertEqual([row["id"] for row in second.json()["sessions"]], [202])
+
+    async def test_mobile_attendance_mutation_is_idempotent_and_detects_conflict(self):
+        headers = {**self.headers, "X-Tahfiz-ID": "1"}
+        mutation = {
+            "mutation_id": "mobile-mutation-0001",
+            "device_id": "device-install-0001",
+            "entity_type": "attendance",
+            "entity_key": "201:101",
+            "base_revision": 0,
+            "values": {
+                "session_id": 201,
+                "student_id": 101,
+                "status": "حاضر",
+                "notes": None,
+                "sheikh_id": None,
+            },
+        }
+        first = await self.client.post("/sync/v1/mutations", headers=headers, json={"mutations": [mutation]})
+        replay = await self.client.post("/sync/v1/mutations", headers=headers, json={"mutations": [mutation]})
+        conflict = await self.client.post("/sync/v1/mutations", headers=headers, json={"mutations": [{
+            **mutation,
+            "mutation_id": "mobile-mutation-0002",
+            "values": {**mutation["values"], "status": "غياب"},
+        }]})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["results"][0]["status"], "applied")
+        self.assertEqual(first.json()["results"][0]["entity"]["revision"], 1)
+        self.assertTrue(replay.json()["results"][0]["replayed"])
+        self.assertEqual(conflict.json()["results"][0]["status"], "conflict")
+        self.assertEqual(conflict.json()["results"][0]["server"]["status"], "حاضر")
+
+    async def test_mobile_mutation_cannot_reference_another_tenants_student(self):
+        response = await self.client.post(
+            "/sync/v1/mutations",
+            headers={**self.headers, "X-Tahfiz-ID": "1"},
+            json={"mutations": [{
+                "mutation_id": "mobile-mutation-tenant-check",
+                "device_id": "device-install-0001",
+                "entity_type": "attendance",
+                "entity_key": "201:102",
+                "base_revision": 0,
+                "values": {
+                    "session_id": 201,
+                    "student_id": 102,
+                    "status": "حاضر",
+                },
+            }]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["results"][0]["status"], "rejected")
+        self.assertEqual(response.json()["results"][0]["code"], "entity_not_found")

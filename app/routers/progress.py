@@ -248,7 +248,10 @@ async def save_session_progress(
         statement = sqlite_insert(QuranProgressEntry).values(**values)
         statement = statement.on_conflict_do_update(
             index_elements=["session_id", "student_id", "category"],
-            set_={key: value for key, value in values.items() if key not in {"session_id", "student_id", "category"}},
+            set_={
+                **{key: value for key, value in values.items() if key not in {"session_id", "student_id", "category"}},
+                "revision": QuranProgressEntry.revision + 1,
+            },
         )
         await db.execute(statement)
 

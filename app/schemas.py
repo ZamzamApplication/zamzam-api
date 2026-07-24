@@ -1,5 +1,7 @@
 from datetime import date, datetime, time
-from pydantic import BaseModel, Field, model_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ParentPhoneOut(BaseModel):
@@ -27,11 +29,24 @@ class UpdateParentPhone(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str | None = None
+    expires_in: int | None = None
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+    device_id: str | None = Field(default=None, min_length=8, max_length=100)
+    device_name: str | None = Field(default=None, max_length=100)
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=500)
+    device_id: str = Field(min_length=8, max_length=100)
+
+
+class RevokeDeviceRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=500)
 
 
 class SignupRequest(BaseModel):
@@ -252,6 +267,33 @@ class UpdateStudentRequest(BaseModel):
 
 class PlatformTahfizActionRequest(BaseModel):
     reason: str | None = None
+
+
+class CreateFeedbackRequest(BaseModel):
+    category: Literal["bug", "suggestion", "other"] = "bug"
+    title: str = Field(min_length=5, max_length=120)
+    description: str = Field(min_length=10, max_length=4000)
+    page_url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("page_url")
+    @classmethod
+    def normalize_page_url(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class UpdateFeedbackStatusRequest(BaseModel):
+    status: Literal["open", "in_review", "resolved", "not_an_issue"]
+    resolution_note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("resolution_note")
+    @classmethod
+    def normalize_resolution_note(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
 
 class UpdateTahfizSettingsRequest(BaseModel):

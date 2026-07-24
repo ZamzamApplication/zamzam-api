@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-this-to-a-secure-random-key-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     UPLOAD_DIR: str = "./uploads"
     BACKUP_DIR: str = "./backups"
     BACKUP_INTERVAL_HOURS: int = 24

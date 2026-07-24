@@ -9,6 +9,8 @@ from app.models import Tahfiz, TahfizStatus, User, UserRole, UserTahfizMembershi
 from app.routers.auth import (
     TenantContext,
     create_access_token,
+    issue_refresh_token,
+    refresh_token_hash,
     get_tenant_context,
     require_admin,
     require_tenant_admin,
@@ -90,6 +92,15 @@ class AccessTokenTests(unittest.TestCase):
             datetime.fromtimestamp(payload["exp"], timezone.utc),
             datetime.now(timezone.utc),
         )
+
+    def test_refresh_tokens_are_random_and_only_hash_is_persisted(self):
+        raw, session = issue_refresh_token(3, "device-install-0001", "Test phone")
+
+        self.assertGreaterEqual(len(raw), 32)
+        self.assertNotEqual(raw, session.token_hash)
+        self.assertEqual(session.token_hash, refresh_token_hash(raw))
+        self.assertEqual(session.user_id, 3)
+        self.assertEqual(session.device_id, "device-install-0001")
 
 
 class RoleContractTests(unittest.IsolatedAsyncioTestCase):

@@ -23,7 +23,27 @@ from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
 from app.media import signed_media_url
-from app.models import Attendance, AuditLog, ExcusedWeekday, ParentPhone, ParentType, QuranProgressEntry, SavedFilter, Session, Sheikh, Student, StudentGoal, StudentStatus, StudentWarning, Tahfiz, User, UserRole, UserTahfizMembership, attendance_status_options
+from app.models import (
+    Attendance,
+    AuditLog,
+    DeviceSession,
+    ExcusedWeekday,
+    ParentPhone,
+    ParentType,
+    QuranProgressEntry,
+    SavedFilter,
+    Session,
+    Sheikh,
+    Student,
+    StudentGoal,
+    StudentStatus,
+    StudentWarning,
+    Tahfiz,
+    User,
+    UserRole,
+    UserTahfizMembership,
+    attendance_status_options,
+)
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
     CreateParentPhone,
@@ -1066,6 +1086,11 @@ async def update_user(
         user.username = body.username
     if body.password is not None:
         user.password_hash = pwd_context.hash(body.password)
+        await db.execute(
+            sa_update(DeviceSession)
+            .where(DeviceSession.user_id == user.id, DeviceSession.revoked_at.is_(None))
+            .values(revoked_at=datetime.utcnow())
+        )
     if body.role is not None:
         if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
             raise HTTPException(status_code=400, detail="Invalid tenant role")
@@ -1213,6 +1238,7 @@ def build_tenant_database(source_path: str, tahfiz_id: int) -> str:
             ("sessions", "DELETE FROM sessions WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("saved_filters", "DELETE FROM saved_filters WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("audit_logs", "DELETE FROM audit_logs WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
+            ("feedback_reports", "DELETE FROM feedback_reports WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
             ("tahfiz_invitations", "DELETE FROM tahfiz_invitations WHERE tahfiz_id != ?", (tahfiz_id,)),
             ("parent_phones", "DELETE FROM parent_phones WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
             ("student_warnings", "DELETE FROM student_warnings WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from app.database import async_session, init_db
 from app.backup_scheduler import backup_loop
 from app.media import validate_media_token
-from app.routers import auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations
+from app.routers import auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback
 from app.seed import seed_data
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ app.include_router(saved_filters.router)
 app.include_router(platform.router)
 app.include_router(progress.router)
 app.include_router(invitations.router)
+app.include_router(sync.router)
+app.include_router(feedback.router)
 
 
 @app.get("/uploads/{filepath:path}")

@@ -1,19 +1,22 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from time import monotonic
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.models import (
     AuditLog,
+    DeviceSession,
     Tahfiz,
     TahfizStatus,
     User,
@@ -21,7 +24,14 @@ from app.models import (
     UserTahfizMembership,
     attendance_status_options,
 )
-from app.schemas import LoginRequest, SetDefaultTahfizRequest, SignupRequest, Token
+from app.schemas import (
+    LoginRequest,
+    RefreshTokenRequest,
+    RevokeDeviceRequest,
+    SetDefaultTahfizRequest,
+    SignupRequest,
+    Token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBearer()
@@ -91,6 +101,38 @@ def create_access_token(data: dict) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_refresh_token(user_id: int, device_id: str, device_name: str | None = None) -> tuple[str, DeviceSession]:
+    raw_token = secrets.token_urlsafe(48)
+    now = datetime.utcnow()
+    return raw_token, DeviceSession(
+        user_id=user_id,
+        token_hash=refresh_token_hash(raw_token),
+        device_id=device_id,
+        device_name=device_name,
+        expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        last_used_at=now,
+        created_at=now,
+    )
+
+
+def token_response(user: User, refresh_token: str | None = None) -> Token:
+    token = create_access_token({
+        "sub": str(user.id),
+        "uid": user.id,
+        "username": user.username,
+        "role": user.role.value,
+    })
+    return Token(
+        access_token=token,
+        refresh_token=refresh_token,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 async def get_current_user(token: str, db: AsyncSession) -> User:
@@ -232,13 +274,65 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     rate_limiter.clear(rate_key)
-    token = create_access_token({
-        "sub": str(user.id),
-        "uid": user.id,
-        "username": user.username,
-        "role": user.role.value,
-    })
-    return Token(access_token=token)
+    refresh_token = None
+    if body.device_id:
+        refresh_token, device_session = issue_refresh_token(
+            user.id,
+            body.device_id,
+            body.device_name,
+        )
+        # A fresh login for the same installation replaces older refresh
+        # sessions, limiting replay after an app reinstall or credential reset.
+        await db.execute(
+            update(DeviceSession)
+            .where(
+                DeviceSession.user_id == user.id,
+                DeviceSession.device_id == body.device_id,
+                DeviceSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.utcnow())
+        )
+        db.add(device_session)
+        await db.commit()
+    return token_response(user, refresh_token)
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    device_session = await db.scalar(select(DeviceSession).where(
+        DeviceSession.token_hash == refresh_token_hash(body.refresh_token),
+        DeviceSession.device_id == body.device_id,
+        DeviceSession.revoked_at.is_(None),
+        DeviceSession.expires_at > now,
+    ))
+    if not device_session:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+    user = await db.get(User, device_session.user_id)
+    if not user or user.is_active is False:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    replacement, replacement_session = issue_refresh_token(
+        user.id,
+        device_session.device_id,
+        device_session.device_name,
+    )
+    device_session.revoked_at = now
+    device_session.last_used_at = now
+    db.add(replacement_session)
+    await db.commit()
+    return token_response(user, replacement)
+
+
+@router.post("/revoke-device", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_device(body: RevokeDeviceRequest, db: AsyncSession = Depends(get_db)):
+    session = await db.scalar(select(DeviceSession).where(
+        DeviceSession.token_hash == refresh_token_hash(body.refresh_token),
+        DeviceSession.revoked_at.is_(None),
+    ))
+    if session:
+        session.revoked_at = datetime.utcnow()
+        await db.commit()
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)

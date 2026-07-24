@@ -43,6 +43,19 @@ class UserRole(str, enum.Enum):
     sheikh = "sheikh"
 
 
+class FeedbackStatus(str, enum.Enum):
+    open = "open"
+    in_review = "in_review"
+    resolved = "resolved"
+    not_an_issue = "not_an_issue"
+
+
+class FeedbackCategory(str, enum.Enum):
+    bug = "bug"
+    suggestion = "suggestion"
+    other = "other"
+
+
 class TahfizStatus(str, enum.Enum):
     pending = "pending"
     active = "active"
@@ -294,6 +307,8 @@ class Attendance(Base):
     # This is intentionally a string: each Tahfiz can configure its own options.
     status: Mapped[str] = mapped_column(String(100), default=AttendanceStatus.absent.value, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")
     student: Mapped[Student] = relationship("Student", back_populates="attendance_records")
@@ -352,6 +367,7 @@ class QuranProgressEntry(Base):
     next_assignment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
 class QuranProgressRevision(Base):
@@ -405,4 +421,97 @@ class AuditLog(Base):
     tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class FeedbackReport(Base):
+    __tablename__ = "feedback_reports"
+    __table_args__ = (
+        Index("ix_feedback_reports_status_created", "status", "created_at"),
+        Index("ix_feedback_reports_tahfiz_created", "tahfiz_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reporter_user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    reporter_username: Mapped[str] = mapped_column(String(50), nullable=False)
+    tahfiz_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("tahfiz.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    category: Mapped[FeedbackCategory] = mapped_column(Enum(FeedbackCategory), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    page_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[FeedbackStatus] = mapped_column(
+        Enum(FeedbackStatus),
+        default=FeedbackStatus.open,
+        nullable=False,
+        index=True,
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class DeviceSession(Base):
+    __tablename__ = "device_sessions"
+    __table_args__ = (
+        Index("ix_device_sessions_user_revoked", "user_id", "revoked_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    device_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SyncChange(Base):
+    __tablename__ = "sync_changes"
+    __table_args__ = (
+        Index("ix_sync_changes_tahfiz_cursor", "tahfiz_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    entity_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    operation: Mapped[str] = mapped_column(String(10), nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SyncMutationReceipt(Base):
+    __tablename__ = "sync_mutation_receipts"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "mutation_id", name="uq_sync_mutation_tenant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    mutation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

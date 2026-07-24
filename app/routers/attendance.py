@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -48,6 +50,8 @@ async def update_attendance(
         attendance.notes = body.notes
     if body.sheikh_id is not None:
         attendance.sheikh_id = body.sheikh_id
+    attendance.revision += 1
+    attendance.updated_at = datetime.utcnow()
     session.version += 1
     await db.commit()
     return {"id": attendance.id, "status": attendance.status, "notes": attendance.notes, "sheikh_id": attendance.sheikh_id, "version": session.version}
@@ -99,6 +103,8 @@ async def upsert_attendance(
             attendance.notes = body.notes
         if body.sheikh_id is not None:
             attendance.sheikh_id = body.sheikh_id
+        attendance.revision += 1
+        attendance.updated_at = datetime.utcnow()
     else:
         attendance = Attendance(
             session_id=body.session_id,
@@ -213,6 +219,7 @@ async def batch_attendance(
             "status": item.status,
             "notes": item.notes,
             "sheikh_id": item.sheikh_id,
+            "updated_at": datetime.utcnow(),
         }
         statement = sqlite_insert(Attendance).values(**values)
         statement = statement.on_conflict_do_update(
@@ -222,6 +229,8 @@ async def batch_attendance(
                 "notes": statement.excluded.notes,
                 "sheikh_id": statement.excluded.sheikh_id,
                 "tahfiz_id": context.tahfiz_id,
+                "revision": Attendance.revision + 1,
+                "updated_at": statement.excluded.updated_at,
             },
         )
         await db.execute(statement)
