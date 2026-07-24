@@ -167,6 +167,22 @@ class FeedbackTenantContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FeedbackMigrationTests(unittest.TestCase):
+    def test_feedback_revision_accepts_table_created_by_current_baseline(self):
+        migration = import_module("migrations.versions.20260724_03_feedback")
+        with TemporaryDirectory(prefix="zamzam-feedback-baseline-") as temporary:
+            engine = create_engine(f"sqlite:///{Path(temporary) / 'baseline.db'}")
+            Base.metadata.create_all(engine)
+            with engine.begin() as connection:
+                operations = Operations(MigrationContext.configure(connection))
+                original_op = migration.op
+                migration.op = operations
+                try:
+                    migration.upgrade()
+                    self.assertIn("feedback_reports", inspect(connection).get_table_names())
+                finally:
+                    migration.op = original_op
+            engine.dispose()
+
     def test_feedback_revision_upgrades_and_downgrades_sqlite(self):
         migration = import_module("migrations.versions.20260724_03_feedback")
         with TemporaryDirectory(prefix="zamzam-feedback-migration-") as temporary:

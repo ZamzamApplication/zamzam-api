@@ -1,0 +1,31 @@
+name: Validate API
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: api-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - run: alembic upgrade head
+        env:
+          DATABASE_URL: sqlite+aiosqlite:////tmp/zamzam-ci.db
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q app tests
+

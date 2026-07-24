@@ -15,6 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if "feedback_reports" in sa.inspect(bind).get_table_names():
+        return
+
     op.create_table(
         "feedback_reports",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
