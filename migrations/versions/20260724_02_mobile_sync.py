@@ -23,8 +23,19 @@ def upgrade() -> None:
     if "updated_at" not in attendance_columns:
         op.add_column(
             "attendance",
-            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(),
+                nullable=False,
+                # SQLite only permits constant defaults when ALTER TABLE adds
+                # a column. Existing rows are backfilled immediately below.
+                server_default=sa.text("'1970-01-01 00:00:00'"),
+            ),
         )
+        op.execute(sa.text(
+            "UPDATE attendance SET updated_at = CURRENT_TIMESTAMP "
+            "WHERE updated_at = '1970-01-01 00:00:00'"
+        ))
 
     progress_columns = {column["name"] for column in inspector.get_columns("quran_progress_entries")}
     if "revision" not in progress_columns:
