@@ -479,6 +479,7 @@ async def get_me(
             "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
             "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
             "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
+            "attendance_sheikh_selection_enabled": tahfiz.attendance_sheikh_selection_enabled,
             "attendance_streak_status": attendance_streak_status_option(tahfiz),
             "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),

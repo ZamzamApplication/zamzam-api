@@ -199,6 +199,7 @@ class Tahfiz(Base):
         nullable=False,
     )
     attendance_streak_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    attendance_sheikh_selection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     attendance_streak_status: Mapped[str] = mapped_column(
         String(50),
         default=DEFAULT_ATTENDANCE_STREAK_STATUS,

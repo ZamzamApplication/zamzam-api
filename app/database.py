@@ -445,6 +445,10 @@ async def migrate():
             await conn.execute(text(
                 "ALTER TABLE tahfiz ADD COLUMN attendance_streak_alert_enabled BOOLEAN NOT NULL DEFAULT 1"
             ))
+        if "attendance_sheikh_selection_enabled" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN attendance_sheikh_selection_enabled BOOLEAN NOT NULL DEFAULT 1"
+            ))
         if "attendance_streak_status" not in tahfiz_columns:
             await conn.execute(text(
                 "ALTER TABLE tahfiz ADD COLUMN attendance_streak_status VARCHAR(50) NOT NULL DEFAULT 'غياب بعذر'"

@@ -1020,6 +1020,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
         "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
+        "attendance_sheikh_selection_enabled": tahfiz.attendance_sheikh_selection_enabled,
         "attendance_streak_status": attendance_streak_status_option(tahfiz),
         "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
         "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
@@ -1077,6 +1078,9 @@ async def update_tahfiz_settings(
     if body.attendance_streak_alert_enabled is not None and tahfiz.attendance_streak_alert_enabled != body.attendance_streak_alert_enabled:
         tahfiz.attendance_streak_alert_enabled = body.attendance_streak_alert_enabled
         changed_fields.append("attendance_streak_alert_enabled")
+    if body.attendance_sheikh_selection_enabled is not None and tahfiz.attendance_sheikh_selection_enabled != body.attendance_sheikh_selection_enabled:
+        tahfiz.attendance_sheikh_selection_enabled = body.attendance_sheikh_selection_enabled
+        changed_fields.append("attendance_sheikh_selection_enabled")
     if body.attendance_streak_status is not None:
         tracked_status = body.attendance_streak_status.strip()
         if tracked_status not in final_statuses:
