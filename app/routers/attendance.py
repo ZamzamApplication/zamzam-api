@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.attendance_streaks import excused_absence_streak, threshold_alert_after_change
 from app.database import get_db
 from app.models import Attendance, AttendanceBatchOperation, AuditLog, Session, Sheikh, Student, attendance_status_options
 from app.routers.auth import TenantContext, get_tenant_context
@@ -45,6 +46,7 @@ async def update_attendance(
     if not session or session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
+    previous_streak = await excused_absence_streak(db, context.tahfiz, attendance.student_id)
     attendance.status = body.status
     if body.notes is not None:
         attendance.notes = body.notes
@@ -53,8 +55,22 @@ async def update_attendance(
     attendance.revision += 1
     attendance.updated_at = datetime.utcnow()
     session.version += 1
+    await db.flush()
+    alert = await threshold_alert_after_change(
+        db,
+        context.tahfiz,
+        attendance.student_id,
+        previous_streak,
+    )
     await db.commit()
-    return {"id": attendance.id, "status": attendance.status, "notes": attendance.notes, "sheikh_id": attendance.sheikh_id, "version": session.version}
+    return {
+        "id": attendance.id,
+        "status": attendance.status,
+        "notes": attendance.notes,
+        "sheikh_id": attendance.sheikh_id,
+        "version": session.version,
+        "threshold_alerts": [alert.as_dict()] if alert else [],
+    }
 
 
 @router.post("/upsert")
@@ -97,6 +113,7 @@ async def upsert_attendance(
     if body.status not in allowed_statuses and (not attendance or body.status != attendance.status):
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed_statuses}")
 
+    previous_streak = await excused_absence_streak(db, context.tahfiz, student.id)
     if attendance:
         attendance.status = body.status
         if body.notes is not None:
@@ -117,9 +134,26 @@ async def upsert_attendance(
         db.add(attendance)
 
     session.version += 1
+    await db.flush()
+    alert = await threshold_alert_after_change(
+        db,
+        context.tahfiz,
+        student.id,
+        previous_streak,
+        student.name,
+    )
     await db.commit()
     await db.refresh(attendance)
-    return {"id": attendance.id, "status": attendance.status, "notes": attendance.notes, "session_id": attendance.session_id, "student_id": attendance.student_id, "sheikh_id": attendance.sheikh_id, "version": session.version}
+    return {
+        "id": attendance.id,
+        "status": attendance.status,
+        "notes": attendance.notes,
+        "session_id": attendance.session_id,
+        "student_id": attendance.student_id,
+        "sheikh_id": attendance.sheikh_id,
+        "version": session.version,
+        "threshold_alerts": [alert.as_dict()] if alert else [],
+    }
 
 
 @router.post("/batch")
@@ -141,6 +175,7 @@ async def batch_attendance(
             "version": existing_operation.resulting_version,
             "saved": len(body.updates),
             "replayed": True,
+            "threshold_alerts": [],
         }
 
     session = await db.scalar(select(Session).where(
@@ -208,6 +243,16 @@ async def batch_attendance(
             Attendance.tahfiz_id == context.tahfiz_id,
         )
     )).all())
+    previous_streaks = {
+        student_id: await excused_absence_streak(db, context.tahfiz, student_id)
+        for student_id in student_ids
+    }
+    student_names = dict((await db.execute(
+        select(Student.id, Student.name).where(
+            Student.id.in_(student_ids),
+            Student.tahfiz_id == context.tahfiz_id,
+        )
+    )).all())
     allowed_statuses = attendance_status_options(context.tahfiz)
     for item in body.updates:
         if item.status not in allowed_statuses and existing_statuses.get(item.student_id) != item.status:
@@ -235,6 +280,19 @@ async def batch_attendance(
         )
         await db.execute(statement)
 
+    await db.flush()
+    threshold_alerts = []
+    for student_id in student_ids:
+        alert = await threshold_alert_after_change(
+            db,
+            context.tahfiz,
+            student_id,
+            previous_streaks[student_id],
+            student_names.get(student_id),
+        )
+        if alert:
+            threshold_alerts.append(alert.as_dict())
+
     db.add(AttendanceBatchOperation(
         tahfiz_id=context.tahfiz_id,
         session_id=session.id,
@@ -253,4 +311,5 @@ async def batch_attendance(
         "version": resulting_version,
         "saved": len(body.updates),
         "replayed": False,
+        "threshold_alerts": threshold_alerts,
     }

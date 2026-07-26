@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.attendance_streaks import excused_absence_streak, threshold_alert_after_change
 from app.media import signed_media_url
 from app.models import (
     Attendance,
@@ -22,6 +23,8 @@ from app.models import (
     SyncChange,
     SyncMutationReceipt,
     attendance_status_options,
+    attendance_status_color_options,
+    excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context
 from app.routers.progress import progress_snapshot
@@ -63,6 +66,7 @@ def serialize_student(row: Student) -> dict[str, Any]:
         "name": row.name,
         "phone": row.phone,
         "student_code": row.student_id,
+        "birthday": row.birthday.isoformat() if row.birthday else None,
         "profile_pic": signed_media_url(row.profile_pic, row.tahfiz_id),
         "status": row.status.value,
         "registration_date": row.registration_date.isoformat() if row.registration_date else None,
@@ -166,13 +170,16 @@ async def bootstrap(
     )).scalars().all() if session_ids else []
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "cursor": await current_cursor(db, context.tahfiz_id),
         "server_time": datetime.utcnow().isoformat(),
         "tahfiz": {
             "id": context.tahfiz.id,
             "name": context.tahfiz.name,
             "attendance_statuses": attendance_status_options(context.tahfiz),
+            "attendance_status_colors": attendance_status_color_options(context.tahfiz),
+            "excused_absence_streak_limit": context.tahfiz.excused_absence_streak_limit,
+            "excused_absence_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
             "week_start_day": context.tahfiz.week_start_day,
             "month_start_day": context.tahfiz.month_start_day,
@@ -283,6 +290,7 @@ async def apply_attendance(
             "server": serialize_attendance(row) if row else None,
             "local": values,
         }
+    previous_streak = await excused_absence_streak(db, context.tahfiz, student_id)
     sheikh_id = values.get("sheikh_id")
     if sheikh_id is not None and not await db.scalar(select(Sheikh.id).where(
         Sheikh.id == int(sheikh_id),
@@ -310,7 +318,18 @@ async def apply_attendance(
         db.add(row)
     session.version += 1
     await db.flush()
-    return {"status": "applied", "entity": serialize_attendance(row)}
+    alert = await threshold_alert_after_change(
+        db,
+        context.tahfiz,
+        student_id,
+        previous_streak,
+        student.name,
+    )
+    return {
+        "status": "applied",
+        "entity": serialize_attendance(row),
+        "threshold_alerts": [alert.as_dict()] if alert else [],
+    }
 
 
 async def apply_progress(

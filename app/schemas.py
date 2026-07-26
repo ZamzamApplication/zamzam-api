@@ -66,6 +66,14 @@ class TahfizOut(BaseModel):
     week_start_day: int = 6
     month_start_day: int = 1
     attendance_statuses: list[str] = ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"]
+    excused_absence_streak_limit: int = 3
+    excused_absence_reset_statuses: list[str] = ["حاضر"]
+    attendance_status_colors: dict[str, str] = {
+        "حاضر": "green",
+        "غياب": "slate",
+        "غياب بعذر": "amber",
+        "لا ينطبق": "sky",
+    }
 
     class Config:
         from_attributes = True
@@ -304,6 +312,9 @@ class UpdateTahfizSettingsRequest(BaseModel):
     week_start_day: int | None = None
     month_start_day: int | None = None
     attendance_statuses: list[str] | None = None
+    excused_absence_streak_limit: int | None = Field(default=None, ge=1, le=1000)
+    excused_absence_reset_statuses: list[str] | None = None
+    attendance_status_colors: dict[str, str] | None = None
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None

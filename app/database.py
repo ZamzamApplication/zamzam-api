@@ -427,6 +427,20 @@ async def migrate():
             await conn.execute(text(
                 f"ALTER TABLE tahfiz ADD COLUMN attendance_statuses TEXT NOT NULL DEFAULT '{default_statuses}'"
             ))
+        if "excused_absence_streak_limit" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN excused_absence_streak_limit INTEGER NOT NULL DEFAULT 3"
+            ))
+        if "excused_absence_reset_statuses" not in tahfiz_columns:
+            default_reset_statuses = '["حاضر"]'
+            await conn.execute(text(
+                f"ALTER TABLE tahfiz ADD COLUMN excused_absence_reset_statuses TEXT NOT NULL DEFAULT '{default_reset_statuses}'"
+            ))
+        if "attendance_status_colors" not in tahfiz_columns:
+            default_status_colors = '{"حاضر":"green","غياب":"slate","غياب بعذر":"amber","لا ينطبق":"sky"}'
+            await conn.execute(text(
+                f"ALTER TABLE tahfiz ADD COLUMN attendance_status_colors TEXT NOT NULL DEFAULT '{default_status_colors}'"
+            ))
         if "contact_phone" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN contact_phone VARCHAR(20)"))
         if "status" not in tahfiz_columns:

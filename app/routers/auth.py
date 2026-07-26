@@ -23,6 +23,8 @@ from app.models import (
     UserRole,
     UserTahfizMembership,
     attendance_status_options,
+    attendance_status_color_options,
+    excused_absence_reset_status_options,
 )
 from app.schemas import (
     LoginRequest,
@@ -472,6 +474,9 @@ async def get_me(
             "week_start_day": tahfiz.week_start_day,
             "month_start_day": tahfiz.month_start_day,
             "attendance_statuses": attendance_status_options(tahfiz),
+            "attendance_status_colors": attendance_status_color_options(tahfiz),
+            "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
+            "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),
     }

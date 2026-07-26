@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.attendance_streaks import excused_absence_streak
 from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
@@ -43,6 +44,9 @@ from app.models import (
     UserRole,
     UserTahfizMembership,
     attendance_status_options,
+    attendance_status_color_options,
+    ATTENDANCE_STATUS_COLOR_KEYS,
+    excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
 from app.schemas import (
@@ -413,6 +417,111 @@ async def list_students(
         }
         for s in students
     ]
+
+
+@router.get("/students/{student_id}/profile")
+async def student_profile(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    student = await db.scalar(
+        select(Student)
+        .options(
+            selectinload(Student.sheikh),
+            selectinload(Student.parent_phones),
+            selectinload(Student.warnings),
+            selectinload(Student.excused_weekdays),
+        )
+        .where(
+            Student.id == student_id,
+            Student.tahfiz_id == context.tahfiz_id,
+        )
+    )
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    attendance_rows = (await db.execute(
+        select(Attendance.status, func.count(Attendance.id))
+        .where(
+            Attendance.student_id == student.id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+        )
+        .group_by(Attendance.status)
+    )).all()
+    attendance_counts = {status: count for status, count in attendance_rows}
+    progress_count, average_quality = (await db.execute(
+        select(
+            func.count(QuranProgressEntry.id),
+            func.coalesce(func.avg(QuranProgressEntry.quality_score), 0),
+        ).where(
+            QuranProgressEntry.student_id == student.id,
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+        )
+    )).one()
+    active_goals = int(await db.scalar(
+        select(func.count(StudentGoal.id)).where(
+            StudentGoal.student_id == student.id,
+            StudentGoal.tahfiz_id == context.tahfiz_id,
+            StudentGoal.status == "active",
+        )
+    ) or 0)
+
+    return {
+        "id": student.id,
+        "name": student.name,
+        "phone": student.phone,
+        "student_id": student.student_id,
+        "birthday": student.birthday.isoformat() if student.birthday else None,
+        "profile_pic": signed_media_url(student.profile_pic, context.tahfiz_id),
+        "status": student.status.value,
+        "registration_date": student.registration_date.isoformat() if student.registration_date else None,
+        "sort_order": student.sort_order,
+        "sheikh": {
+            "id": student.sheikh.id,
+            "name": student.sheikh.name,
+        } if student.sheikh else None,
+        "parent_phones": [
+            {
+                "id": phone.id,
+                "phone_number": phone.phone_number,
+                "parent_type": phone.parent_type.value,
+                "name": phone.name,
+            }
+            for phone in student.parent_phones
+        ],
+        "excused_weekdays": [
+            {"id": row.id, "weekday": row.weekday, "note": row.note}
+            for row in sorted(student.excused_weekdays, key=lambda row: row.weekday)
+        ],
+        "warnings": [
+            {
+                "id": warning.id,
+                "reason": warning.reason,
+                "warning_number": warning.warning_number,
+                "sent": warning.sent,
+                "sent_at": warning.sent_at.isoformat() if warning.sent_at else None,
+                "created_at": warning.created_at.isoformat(),
+            }
+            for warning in student.warnings
+        ],
+        "attendance": {
+            "total": sum(attendance_counts.values()),
+            "present": attendance_counts.get("حاضر", 0),
+            "absent": attendance_counts.get("غياب", 0),
+            "excused": attendance_counts.get("غياب بعذر", 0),
+            "not_applicable": attendance_counts.get("لا ينطبق", 0),
+            "excused_streak": await excused_absence_streak(db, context.tahfiz, student.id),
+            "excused_streak_limit": context.tahfiz.excused_absence_streak_limit,
+        },
+        "progress": {
+            "enabled": context.tahfiz.progress_tracking_enabled,
+            "entries": int(progress_count),
+            "average_quality": round(float(average_quality), 1),
+            "active_goals": active_goals,
+        },
+        "can_manage": context.effective_role in (UserRole.admin, UserRole.super_admin),
+    }
 
 
 @router.post("/students")
@@ -900,6 +1009,9 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "week_start_day": tahfiz.week_start_day,
         "month_start_day": tahfiz.month_start_day,
         "attendance_statuses": attendance_status_options(tahfiz),
+        "attendance_status_colors": attendance_status_color_options(tahfiz),
+        "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
+        "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
@@ -949,6 +1061,43 @@ async def update_tahfiz_settings(
         if tahfiz.attendance_statuses != serialized_statuses:
             tahfiz.attendance_statuses = serialized_statuses
             changed_fields.append("attendance_statuses")
+    final_statuses = attendance_status_options(tahfiz)
+    requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
+    invalid_color = next(
+        (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),
+        None,
+    )
+    if invalid_color:
+        raise HTTPException(status_code=400, detail="Invalid attendance status color")
+    normalized_colors = {
+        status: requested_colors.get(
+            status,
+            attendance_status_color_options(tahfiz).get(status, "violet"),
+        )
+        for status in final_statuses
+    }
+    serialized_colors = json.dumps(normalized_colors, ensure_ascii=False, sort_keys=True)
+    if tahfiz.attendance_status_colors != serialized_colors:
+        tahfiz.attendance_status_colors = serialized_colors
+        changed_fields.append("attendance_status_colors")
+    if body.excused_absence_streak_limit is not None:
+        if tahfiz.excused_absence_streak_limit != body.excused_absence_streak_limit:
+            tahfiz.excused_absence_streak_limit = body.excused_absence_streak_limit
+            changed_fields.append("excused_absence_streak_limit")
+    reset_statuses = (
+        body.excused_absence_reset_statuses
+        if body.excused_absence_reset_statuses is not None
+        else excused_absence_reset_status_options(tahfiz)
+    )
+    normalized_reset_statuses = list(dict.fromkeys(
+        status.strip()
+        for status in reset_statuses
+        if status.strip() in final_statuses and status.strip() != "غياب بعذر"
+    ))
+    serialized_reset_statuses = json.dumps(normalized_reset_statuses, ensure_ascii=False)
+    if tahfiz.excused_absence_reset_statuses != serialized_reset_statuses:
+        tahfiz.excused_absence_reset_statuses = serialized_reset_statuses
+        changed_fields.append("excused_absence_reset_statuses")
     if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
         tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
         changed_fields.append("progress_tracking_enabled")

@@ -24,6 +24,15 @@ class AttendanceStatus(str, enum.Enum):
 
 
 DEFAULT_ATTENDANCE_STATUSES = [status.value for status in AttendanceStatus]
+DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
+DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
+ATTENDANCE_STATUS_COLOR_KEYS = ("green", "slate", "amber", "sky", "violet", "rose")
+DEFAULT_ATTENDANCE_STATUS_COLORS = {
+    AttendanceStatus.present.value: "green",
+    AttendanceStatus.absent.value: "slate",
+    AttendanceStatus.excused.value: "amber",
+    AttendanceStatus.not_applicable.value: "sky",
+}
 
 
 def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
@@ -35,6 +44,41 @@ def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
         return DEFAULT_ATTENDANCE_STATUSES.copy()
     normalized = [value.strip() for value in values if isinstance(value, str) and value.strip()]
     return normalized or DEFAULT_ATTENDANCE_STATUSES.copy()
+
+
+def excused_absence_reset_status_options(tahfiz: "Tahfiz") -> list[str]:
+    try:
+        values = json.loads(tahfiz.excused_absence_reset_statuses)
+    except (TypeError, ValueError):
+        return DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES.copy()
+    if not isinstance(values, list):
+        return DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES.copy()
+    normalized = [
+        value.strip()
+        for value in values
+        if isinstance(value, str)
+        and value.strip()
+        and value.strip() != AttendanceStatus.excused.value
+    ]
+    return list(dict.fromkeys(normalized))
+
+
+def attendance_status_color_options(tahfiz: "Tahfiz") -> dict[str, str]:
+    statuses = attendance_status_options(tahfiz)
+    try:
+        values = json.loads(tahfiz.attendance_status_colors)
+    except (TypeError, ValueError):
+        values = {}
+    if not isinstance(values, dict):
+        values = {}
+    return {
+        status: (
+            values.get(status)
+            if values.get(status) in ATTENDANCE_STATUS_COLOR_KEYS
+            else DEFAULT_ATTENDANCE_STATUS_COLORS.get(status, "violet")
+        )
+        for status in statuses
+    }
 
 
 class UserRole(str, enum.Enum):
@@ -126,6 +170,21 @@ class Tahfiz(Base):
     attendance_statuses: Mapped[str] = mapped_column(
         Text,
         default=lambda: json.dumps(DEFAULT_ATTENDANCE_STATUSES, ensure_ascii=False),
+        nullable=False,
+    )
+    excused_absence_streak_limit: Mapped[int] = mapped_column(
+        Integer,
+        default=DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT,
+        nullable=False,
+    )
+    excused_absence_reset_statuses: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES, ensure_ascii=False),
+        nullable=False,
+    )
+    attendance_status_colors: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_ATTENDANCE_STATUS_COLORS, ensure_ascii=False),
         nullable=False,
     )
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
