@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.attendance_streaks import excused_absence_streak, threshold_alert_after_change
+from app.attendance_streaks import attendance_status_streak, threshold_alert_after_change
 from app.media import signed_media_url
 from app.models import (
     Attendance,
@@ -24,6 +24,7 @@ from app.models import (
     SyncMutationReceipt,
     attendance_status_options,
     attendance_status_color_options,
+    attendance_streak_status_option,
     excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context
@@ -180,6 +181,10 @@ async def bootstrap(
             "attendance_status_colors": attendance_status_color_options(context.tahfiz),
             "excused_absence_streak_limit": context.tahfiz.excused_absence_streak_limit,
             "excused_absence_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
+            "attendance_streak_alert_enabled": context.tahfiz.attendance_streak_alert_enabled,
+            "attendance_streak_status": attendance_streak_status_option(context.tahfiz),
+            "attendance_streak_limit": context.tahfiz.excused_absence_streak_limit,
+            "attendance_streak_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
             "week_start_day": context.tahfiz.week_start_day,
             "month_start_day": context.tahfiz.month_start_day,
@@ -290,7 +295,7 @@ async def apply_attendance(
             "server": serialize_attendance(row) if row else None,
             "local": values,
         }
-    previous_streak = await excused_absence_streak(db, context.tahfiz, student_id)
+    previous_streak = await attendance_status_streak(db, context.tahfiz, student_id)
     sheikh_id = values.get("sheikh_id")
     if sheikh_id is not None and not await db.scalar(select(Sheikh.id).where(
         Sheikh.id == int(sheikh_id),

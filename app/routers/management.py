@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.attendance_streaks import excused_absence_streak
+from app.attendance_streaks import attendance_status_streak
 from app.database import get_db
 
 from app.integrations import encrypt_secret, tenant_whatsend_config
@@ -45,6 +45,7 @@ from app.models import (
     UserTahfizMembership,
     attendance_status_options,
     attendance_status_color_options,
+    attendance_streak_status_option,
     ATTENDANCE_STATUS_COLOR_KEYS,
     excused_absence_reset_status_options,
 )
@@ -92,6 +93,8 @@ async def list_whatsend_groups(
     context: TenantContext = Depends(require_tenant_admin),
 ):
     tahfiz = await db.get(Tahfiz, context.tahfiz_id)
+    if not tahfiz.whatsend_enabled:
+        raise HTTPException(status_code=409, detail="تكامل واتساب غير مفعّل")
     try:
         return {"groups": await fetch_whatsend_groups(tahfiz)}
     except Exception as e:
@@ -117,6 +120,8 @@ def whatsend_error(exc: Exception) -> str:
 
 
 async def send_whatsend_group_message(tahfiz: Tahfiz, group_id: str, message: str) -> None:
+    if not tahfiz.whatsend_enabled:
+        raise ValueError("تكامل واتساب غير مفعّل")
     api_url, _, api_key = tenant_whatsend_config(tahfiz)
     if not api_key:
         raise RuntimeError("مفتاح WhatSend API غير مضبوط")
@@ -511,8 +516,10 @@ async def student_profile(
             "absent": attendance_counts.get("غياب", 0),
             "excused": attendance_counts.get("غياب بعذر", 0),
             "not_applicable": attendance_counts.get("لا ينطبق", 0),
-            "excused_streak": await excused_absence_streak(db, context.tahfiz, student.id),
-            "excused_streak_limit": context.tahfiz.excused_absence_streak_limit,
+            "streak": await attendance_status_streak(db, context.tahfiz, student.id),
+            "streak_limit": context.tahfiz.excused_absence_streak_limit,
+            "streak_status": attendance_streak_status_option(context.tahfiz),
+            "streak_alert_enabled": context.tahfiz.attendance_streak_alert_enabled,
         },
         "progress": {
             "enabled": context.tahfiz.progress_tracking_enabled,
@@ -1012,6 +1019,11 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "attendance_status_colors": attendance_status_color_options(tahfiz),
         "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
         "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
+        "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
+        "attendance_streak_status": attendance_streak_status_option(tahfiz),
+        "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
+        "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
+        "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
@@ -1062,6 +1074,16 @@ async def update_tahfiz_settings(
             tahfiz.attendance_statuses = serialized_statuses
             changed_fields.append("attendance_statuses")
     final_statuses = attendance_status_options(tahfiz)
+    if body.attendance_streak_alert_enabled is not None and tahfiz.attendance_streak_alert_enabled != body.attendance_streak_alert_enabled:
+        tahfiz.attendance_streak_alert_enabled = body.attendance_streak_alert_enabled
+        changed_fields.append("attendance_streak_alert_enabled")
+    if body.attendance_streak_status is not None:
+        tracked_status = body.attendance_streak_status.strip()
+        if tracked_status not in final_statuses:
+            raise HTTPException(status_code=400, detail="Tracked attendance status must be configured")
+        if tahfiz.attendance_streak_status != tracked_status:
+            tahfiz.attendance_streak_status = tracked_status
+            changed_fields.append("attendance_streak_status")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),
@@ -1080,30 +1102,37 @@ async def update_tahfiz_settings(
     if tahfiz.attendance_status_colors != serialized_colors:
         tahfiz.attendance_status_colors = serialized_colors
         changed_fields.append("attendance_status_colors")
-    if body.excused_absence_streak_limit is not None:
-        if tahfiz.excused_absence_streak_limit != body.excused_absence_streak_limit:
-            tahfiz.excused_absence_streak_limit = body.excused_absence_streak_limit
-            changed_fields.append("excused_absence_streak_limit")
+    requested_limit = body.attendance_streak_limit if body.attendance_streak_limit is not None else body.excused_absence_streak_limit
+    if requested_limit is not None:
+        if tahfiz.excused_absence_streak_limit != requested_limit:
+            tahfiz.excused_absence_streak_limit = requested_limit
+            changed_fields.append("attendance_streak_limit")
     reset_statuses = (
-        body.excused_absence_reset_statuses
+        body.attendance_streak_reset_statuses
+        if body.attendance_streak_reset_statuses is not None
+        else body.excused_absence_reset_statuses
         if body.excused_absence_reset_statuses is not None
         else excused_absence_reset_status_options(tahfiz)
     )
+    tracked_status = attendance_streak_status_option(tahfiz)
     normalized_reset_statuses = list(dict.fromkeys(
         status.strip()
         for status in reset_statuses
-        if status.strip() in final_statuses and status.strip() != "غياب بعذر"
+        if status.strip() in final_statuses and status.strip() != tracked_status
     ))
     serialized_reset_statuses = json.dumps(normalized_reset_statuses, ensure_ascii=False)
     if tahfiz.excused_absence_reset_statuses != serialized_reset_statuses:
         tahfiz.excused_absence_reset_statuses = serialized_reset_statuses
-        changed_fields.append("excused_absence_reset_statuses")
+        changed_fields.append("attendance_streak_reset_statuses")
     if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
         tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
         changed_fields.append("progress_tracking_enabled")
     if body.whatsend_api_key is not None:
         tahfiz.whatsend_api_key_encrypted = encrypt_secret(body.whatsend_api_key.strip()) if body.whatsend_api_key.strip() else None
         changed_fields.append("whatsend_api_key")
+    if body.whatsend_enabled is not None and tahfiz.whatsend_enabled != body.whatsend_enabled:
+        tahfiz.whatsend_enabled = body.whatsend_enabled
+        changed_fields.append("whatsend_enabled")
     if changed_fields:
         db.add(AuditLog(
             actor_user_id=context.user.id,

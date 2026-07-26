@@ -5,10 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Attendance,
-    AttendanceStatus,
     Session,
     Student,
     Tahfiz,
+    attendance_streak_status_option,
     excused_absence_reset_status_options,
 )
 
@@ -19,6 +19,7 @@ class ExcusedAbsenceThresholdAlert:
     student_name: str
     streak: int
     limit: int
+    status: str
 
     def as_dict(self) -> dict[str, int | str]:
         return {
@@ -26,20 +27,21 @@ class ExcusedAbsenceThresholdAlert:
             "student_name": self.student_name,
             "streak": self.streak,
             "limit": self.limit,
+            "status": self.status,
         }
 
 
-def calculate_excused_absence_streak(statuses: list[str], reset_statuses: set[str]) -> int:
+def calculate_attendance_status_streak(statuses: list[str], tracked_status: str, reset_statuses: set[str]) -> int:
     streak = 0
     for status in statuses:
-        if status == AttendanceStatus.excused.value:
+        if status == tracked_status:
             streak += 1
         elif status in reset_statuses:
             break
     return streak
 
 
-async def excused_absence_streak(
+async def attendance_status_streak(
     db: AsyncSession,
     tahfiz: Tahfiz,
     student_id: int,
@@ -55,7 +57,11 @@ async def excused_absence_streak(
         .order_by(Session.date.desc(), Session.id.desc(), Attendance.id.desc())
     )).scalars().all()
     reset_statuses = set(excused_absence_reset_status_options(tahfiz))
-    return calculate_excused_absence_streak(list(statuses), reset_statuses)
+    return calculate_attendance_status_streak(
+        list(statuses),
+        attendance_streak_status_option(tahfiz),
+        reset_statuses,
+    )
 
 
 async def threshold_alert_after_change(
@@ -65,7 +71,9 @@ async def threshold_alert_after_change(
     previous_streak: int,
     student_name: str | None = None,
 ) -> ExcusedAbsenceThresholdAlert | None:
-    current_streak = await excused_absence_streak(db, tahfiz, student_id)
+    if not tahfiz.attendance_streak_alert_enabled:
+        return None
+    current_streak = await attendance_status_streak(db, tahfiz, student_id)
     limit = tahfiz.excused_absence_streak_limit
     if previous_streak <= limit < current_streak:
         if student_name is None:
@@ -79,5 +87,6 @@ async def threshold_alert_after_change(
                 student_name=student_name,
                 streak=current_streak,
                 limit=limit,
+                status=attendance_streak_status_option(tahfiz),
             )
     return None

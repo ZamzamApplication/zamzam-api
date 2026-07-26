@@ -441,6 +441,14 @@ async def migrate():
             await conn.execute(text(
                 f"ALTER TABLE tahfiz ADD COLUMN attendance_status_colors TEXT NOT NULL DEFAULT '{default_status_colors}'"
             ))
+        if "attendance_streak_alert_enabled" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN attendance_streak_alert_enabled BOOLEAN NOT NULL DEFAULT 1"
+            ))
+        if "attendance_streak_status" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN attendance_streak_status VARCHAR(50) NOT NULL DEFAULT 'غياب بعذر'"
+            ))
         if "contact_phone" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN contact_phone VARCHAR(20)"))
         if "status" not in tahfiz_columns:
@@ -459,6 +467,8 @@ async def migrate():
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_groups_url VARCHAR(500)"))
         if "whatsend_api_key_encrypted" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_api_key_encrypted TEXT"))
+        if "whatsend_enabled" not in tahfiz_columns:
+            await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN whatsend_enabled BOOLEAN NOT NULL DEFAULT 1"))
         if "created_at" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
         if "progress_tracking_enabled" not in tahfiz_columns:

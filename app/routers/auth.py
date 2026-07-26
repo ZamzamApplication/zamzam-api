@@ -24,6 +24,7 @@ from app.models import (
     UserTahfizMembership,
     attendance_status_options,
     attendance_status_color_options,
+    attendance_streak_status_option,
     excused_absence_reset_status_options,
 )
 from app.schemas import (
@@ -477,6 +478,11 @@ async def get_me(
             "attendance_status_colors": attendance_status_color_options(tahfiz),
             "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
             "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
+            "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
+            "attendance_streak_status": attendance_streak_status_option(tahfiz),
+            "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
+            "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
+            "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),
     }

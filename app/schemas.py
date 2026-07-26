@@ -68,12 +68,17 @@ class TahfizOut(BaseModel):
     attendance_statuses: list[str] = ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"]
     excused_absence_streak_limit: int = 3
     excused_absence_reset_statuses: list[str] = ["حاضر"]
+    attendance_streak_alert_enabled: bool = True
+    attendance_streak_status: str = "غياب بعذر"
+    attendance_streak_limit: int = 3
+    attendance_streak_reset_statuses: list[str] = ["حاضر"]
     attendance_status_colors: dict[str, str] = {
         "حاضر": "green",
         "غياب": "slate",
         "غياب بعذر": "amber",
         "لا ينطبق": "sky",
     }
+    whatsend_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -314,10 +319,15 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_statuses: list[str] | None = None
     excused_absence_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     excused_absence_reset_statuses: list[str] | None = None
+    attendance_streak_alert_enabled: bool | None = None
+    attendance_streak_status: str | None = Field(default=None, min_length=1, max_length=50)
+    attendance_streak_limit: int | None = Field(default=None, ge=1, le=1000)
+    attendance_streak_reset_statuses: list[str] | None = None
     attendance_status_colors: dict[str, str] | None = None
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None
+    whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
 
 

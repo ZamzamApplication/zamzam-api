@@ -26,6 +26,7 @@ class AttendanceStatus(str, enum.Enum):
 DEFAULT_ATTENDANCE_STATUSES = [status.value for status in AttendanceStatus]
 DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
 DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
+DEFAULT_ATTENDANCE_STREAK_STATUS = AttendanceStatus.excused.value
 ATTENDANCE_STATUS_COLOR_KEYS = ("green", "slate", "amber", "sky", "violet", "rose")
 DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.present.value: "green",
@@ -58,9 +59,19 @@ def excused_absence_reset_status_options(tahfiz: "Tahfiz") -> list[str]:
         for value in values
         if isinstance(value, str)
         and value.strip()
-        and value.strip() != AttendanceStatus.excused.value
+        and value.strip() != attendance_streak_status_option(tahfiz)
     ]
     return list(dict.fromkeys(normalized))
+
+
+def attendance_streak_status_option(tahfiz: "Tahfiz") -> str:
+    statuses = attendance_status_options(tahfiz)
+    configured = (tahfiz.attendance_streak_status or "").strip()
+    if configured in statuses:
+        return configured
+    if DEFAULT_ATTENDANCE_STREAK_STATUS in statuses:
+        return DEFAULT_ATTENDANCE_STREAK_STATUS
+    return statuses[0]
 
 
 def attendance_status_color_options(tahfiz: "Tahfiz") -> dict[str, str]:
@@ -187,6 +198,12 @@ class Tahfiz(Base):
         default=lambda: json.dumps(DEFAULT_ATTENDANCE_STATUS_COLORS, ensure_ascii=False),
         nullable=False,
     )
+    attendance_streak_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    attendance_streak_status: Mapped[str] = mapped_column(
+        String(50),
+        default=DEFAULT_ATTENDANCE_STREAK_STATUS,
+        nullable=False,
+    )
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -194,6 +211,7 @@ class Tahfiz(Base):
     whatsend_api_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     whatsend_groups_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    whatsend_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     progress_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.attendance_streaks import excused_absence_streak, threshold_alert_after_change
+from app.attendance_streaks import attendance_status_streak, threshold_alert_after_change
 from app.database import get_db
 from app.models import Attendance, AttendanceBatchOperation, AuditLog, Session, Sheikh, Student, attendance_status_options
 from app.routers.auth import TenantContext, get_tenant_context
@@ -46,7 +46,7 @@ async def update_attendance(
     if not session or session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
-    previous_streak = await excused_absence_streak(db, context.tahfiz, attendance.student_id)
+    previous_streak = await attendance_status_streak(db, context.tahfiz, attendance.student_id)
     attendance.status = body.status
     if body.notes is not None:
         attendance.notes = body.notes
@@ -113,7 +113,7 @@ async def upsert_attendance(
     if body.status not in allowed_statuses and (not attendance or body.status != attendance.status):
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed_statuses}")
 
-    previous_streak = await excused_absence_streak(db, context.tahfiz, student.id)
+    previous_streak = await attendance_status_streak(db, context.tahfiz, student.id)
     if attendance:
         attendance.status = body.status
         if body.notes is not None:
@@ -244,7 +244,7 @@ async def batch_attendance(
         )
     )).all())
     previous_streaks = {
-        student_id: await excused_absence_streak(db, context.tahfiz, student_id)
+        student_id: await attendance_status_streak(db, context.tahfiz, student_id)
         for student_id in student_ids
     }
     student_names = dict((await db.execute(
