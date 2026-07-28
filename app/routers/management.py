@@ -1144,7 +1144,8 @@ async def update_tahfiz_settings(
         for template_key, template in requested_templates.items():
             header_font_family = template["header_font_family"].strip()
             cell_font_family = template["cell_font_family"].strip()
-            if not header_font_family or not cell_font_family:
+            date_font_family = template["date_font_family"].strip()
+            if not header_font_family or not cell_font_family or not date_font_family:
                 raise HTTPException(status_code=400, detail="Invalid Excel font")
             allowed_standard_ids = {
                 column["id"]
@@ -1201,6 +1202,10 @@ async def update_tahfiz_settings(
                 "cell_font_size": template["cell_font_size"],
                 "cell_bold": template["cell_bold"],
                 "cell_font_color": template["cell_font_color"].upper(),
+                "date_font_family": date_font_family,
+                "date_font_size": template["date_font_size"],
+                "date_bold": template["date_bold"],
+                "date_font_color": template["date_font_color"].upper(),
                 "attendance_date_format": template["attendance_date_format"],
             }
         serialized_templates = json.dumps(normalized_templates, ensure_ascii=False)

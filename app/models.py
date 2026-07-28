@@ -45,6 +45,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "cell_font_size": 11,
         "cell_bold": False,
         "cell_font_color": "#000000",
+        "date_font_family": "Arial",
+        "date_font_size": 12,
+        "date_bold": True,
+        "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
@@ -63,6 +67,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "cell_font_size": 11,
         "cell_bold": False,
         "cell_font_color": "#000000",
+        "date_font_family": "Arial",
+        "date_font_size": 12,
+        "date_bold": True,
+        "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
@@ -86,6 +94,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "cell_font_size": 11,
         "cell_bold": False,
         "cell_font_color": "#000000",
+        "date_font_family": "Arial",
+        "date_font_size": 12,
+        "date_bold": True,
+        "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
