@@ -1157,8 +1157,23 @@ async def update_tahfiz_settings(
                     or column_id in seen_ids
                     or (is_custom and not column_id.startswith("custom_"))
                     or (not is_custom and column_id not in allowed_standard_ids)
+                    or (column["subcolumns"] and not is_custom)
+                    or len(column["subcolumns"]) == 1
                 ):
                     raise HTTPException(status_code=400, detail="Invalid Excel export template columns")
+                subcolumn_ids: set[str] = set()
+                normalized_subcolumns: list[dict] = []
+                for subcolumn in column["subcolumns"]:
+                    subcolumn_id = subcolumn["id"].strip()
+                    subcolumn_label = subcolumn["label"].strip()
+                    if not subcolumn_label or subcolumn_id in subcolumn_ids:
+                        raise HTTPException(status_code=400, detail="Invalid Excel export template subcolumns")
+                    subcolumn_ids.add(subcolumn_id)
+                    normalized_subcolumns.append({
+                        "id": subcolumn_id,
+                        "label": subcolumn_label,
+                        "width": subcolumn["width"],
+                    })
                 seen_ids.add(column_id)
                 normalized_columns.append({
                     "id": column_id,
@@ -1166,6 +1181,8 @@ async def update_tahfiz_settings(
                     "enabled": column["enabled"],
                     "custom": is_custom,
                     "width": column["width"],
+                    "show_header": column["show_header"],
+                    "subcolumns": normalized_subcolumns,
                 })
             if not any(column["enabled"] for column in normalized_columns):
                 raise HTTPException(status_code=400, detail="At least one Excel column must be enabled")

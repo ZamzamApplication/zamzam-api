@@ -311,12 +311,20 @@ class UpdateFeedbackStatusRequest(BaseModel):
         return value.strip() or None if value is not None else None
 
 
+class ExcelExportSubcolumnSettings(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=80)
+    width: int = Field(default=18, ge=8, le=60)
+
+
 class ExcelExportColumnSettings(BaseModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     label: str = Field(min_length=1, max_length=80)
     enabled: bool = True
     custom: bool = False
     width: int = Field(default=18, ge=8, le=60)
+    show_header: bool = True
+    subcolumns: list[ExcelExportSubcolumnSettings] = Field(default_factory=list, max_length=10)
 
 
 class ExcelExportTemplateSettings(BaseModel):
