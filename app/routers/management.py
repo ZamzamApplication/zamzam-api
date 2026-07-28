@@ -1143,8 +1143,9 @@ async def update_tahfiz_settings(
         normalized_templates: dict[str, dict] = {}
         for template_key, template in requested_templates.items():
             header_font_family = template["header_font_family"].strip()
-            if not header_font_family:
-                raise HTTPException(status_code=400, detail="Invalid Excel header font")
+            cell_font_family = template["cell_font_family"].strip()
+            if not header_font_family or not cell_font_family:
+                raise HTTPException(status_code=400, detail="Invalid Excel font")
             allowed_standard_ids = {
                 column["id"]
                 for column in DEFAULT_EXCEL_EXPORT_TEMPLATES[template_key]["columns"]
@@ -1196,6 +1197,10 @@ async def update_tahfiz_settings(
                 "header_bold": template["header_bold"],
                 "header_background_color": template["header_background_color"].upper(),
                 "header_font_color": template["header_font_color"].upper(),
+                "cell_font_family": cell_font_family,
+                "cell_font_size": template["cell_font_size"],
+                "cell_bold": template["cell_bold"],
+                "cell_font_color": template["cell_font_color"].upper(),
                 "attendance_date_format": template["attendance_date_format"],
             }
         serialized_templates = json.dumps(normalized_templates, ensure_ascii=False)

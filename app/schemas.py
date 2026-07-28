@@ -334,6 +334,10 @@ class ExcelExportTemplateSettings(BaseModel):
     header_bold: bool = True
     header_background_color: str = Field(default="#FFFFFF", pattern=r"^#[0-9A-Fa-f]{6}$")
     header_font_color: str = Field(default="#000000", pattern=r"^#[0-9A-Fa-f]{6}$")
+    cell_font_family: str = Field(default="Arial", min_length=1, max_length=80)
+    cell_font_size: int = Field(default=11, ge=6, le=72)
+    cell_bold: bool = False
+    cell_font_color: str = Field(default="#000000", pattern=r"^#[0-9A-Fa-f]{6}$")
     attendance_date_format: Literal[
         "day",
         "day_month",

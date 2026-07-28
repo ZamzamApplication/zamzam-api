@@ -41,6 +41,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "header_bold": True,
         "header_background_color": "#FFFFFF",
         "header_font_color": "#000000",
+        "cell_font_family": "Arial",
+        "cell_font_size": 11,
+        "cell_bold": False,
+        "cell_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
@@ -55,6 +59,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "header_bold": True,
         "header_background_color": "#FFFFFF",
         "header_font_color": "#000000",
+        "cell_font_family": "Arial",
+        "cell_font_size": 11,
+        "cell_bold": False,
+        "cell_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
@@ -74,6 +82,10 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "header_bold": True,
         "header_background_color": "#FFFFFF",
         "header_font_color": "#000000",
+        "cell_font_family": "Arial",
+        "cell_font_size": 11,
+        "cell_bold": False,
+        "cell_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},

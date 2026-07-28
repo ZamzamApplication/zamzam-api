@@ -45,6 +45,8 @@ def test_excel_export_template_columns_are_validated():
     assert request.excel_export_templates["attendance"].columns[0].id == "serial"
     assert request.excel_export_templates["attendance"].header_font_family == "Arial"
     assert request.excel_export_templates["attendance"].header_background_color == "#FFFFFF"
+    assert request.excel_export_templates["attendance"].cell_font_family == "Arial"
+    assert request.excel_export_templates["attendance"].cell_bold is False
     assert request.excel_export_templates["attendance"].attendance_date_format == "weekday_day_month_year"
 
 
@@ -59,6 +61,10 @@ def test_serial_column_is_added_to_existing_saved_templates_without_resetting_th
         template.pop("header_bold")
         template.pop("header_background_color")
         template.pop("header_font_color")
+        template.pop("cell_font_family")
+        template.pop("cell_font_size")
+        template.pop("cell_bold")
+        template.pop("cell_font_color")
         template.pop("attendance_date_format")
     saved["attendance"]["columns"][0]["label"] = "اسم الطالب"
     tahfiz = Tahfiz(
@@ -76,3 +82,6 @@ def test_serial_column_is_added_to_existing_saved_templates_without_resetting_th
     assert templates["attendance"]["header_font_family"] == "Arial"
     assert templates["attendance"]["header_font_size"] == 12
     assert templates["attendance"]["header_background_color"] == "#FFFFFF"
+    assert templates["attendance"]["cell_font_family"] == "Arial"
+    assert templates["attendance"]["cell_font_size"] == 11
+    assert templates["attendance"]["cell_bold"] is False
