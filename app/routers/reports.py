@@ -151,7 +151,7 @@ async def circle_student_stats(
         select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
         .where(Student.tahfiz_id == tahfiz_id, Student.status == StudentStatus.enrolled)
-        .order_by(Sheikh.name, Student.sort_order)
+        .order_by(Student.name)
     )
     rows = result.all()
     student_ids = [r.id for r in rows]
@@ -316,7 +316,7 @@ async def attendance_grid(
                 Student.tahfiz_id == context.tahfiz_id,
                 Student.status == StudentStatus.enrolled,
             )
-            .order_by(Student.sort_order, Student.name)
+            .order_by(Student.name)
         )
         students = result.scalars().all()
         student_ids = [s.id for s in students]
@@ -327,7 +327,7 @@ async def attendance_grid(
             .outerjoin(Sheikh)
             .options(selectinload(Student.sheikh))
             .where(Student.status == StudentStatus.enrolled, Student.tahfiz_id == context.tahfiz_id)
-            .order_by(Sheikh.name, Student.name)
+            .order_by(Student.name)
         )
         students = result.scalars().all()
         student_ids = [s.id for s in students]

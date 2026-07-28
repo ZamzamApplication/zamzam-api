@@ -235,7 +235,12 @@ class Sheikh(Base):
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
 
     tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="sheikhs")
-    students: Mapped[list["Student"]] = relationship("Student", back_populates="sheikh", foreign_keys="[Student.sheikh_id]")
+    students: Mapped[list["Student"]] = relationship(
+        "Student",
+        back_populates="sheikh",
+        foreign_keys="[Student.sheikh_id]",
+        order_by="Student.name",
+    )
     user: Mapped[User | None] = relationship("User", uselist=False, backref="sheikh")
 
 

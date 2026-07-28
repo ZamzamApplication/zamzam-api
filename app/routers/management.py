@@ -311,7 +311,7 @@ async def get_sheikh_students(
             Student.sheikh_id == sheikh_id,
             Student.tahfiz_id == context.tahfiz_id,
         )
-        .order_by(Student.sort_order)
+        .order_by(Student.name)
     )
     records = result.scalars().all()
 

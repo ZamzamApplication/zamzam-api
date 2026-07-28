@@ -150,7 +150,7 @@ async def bootstrap(
     students = (await db.execute(
         select(Student)
         .where(Student.tahfiz_id == context.tahfiz_id)
-        .order_by(Student.sort_order, Student.name)
+        .order_by(Student.name)
     )).scalars().all()
     sheikhs = (await db.execute(
         select(Sheikh)
