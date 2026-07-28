@@ -34,6 +34,36 @@ DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.excused.value: "amber",
     AttendanceStatus.not_applicable.value: "sky",
 }
+DEFAULT_EXCEL_EXPORT_TEMPLATES = {
+    "attendance": {
+        "columns": [
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
+            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20},
+            {"id": "attendance", "label": "الحضور", "enabled": True, "custom": False, "width": 18},
+        ],
+    },
+    "statistics": {
+        "columns": [
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
+            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20},
+            {"id": "sessions", "label": "إجمالي الحلقات", "enabled": True, "custom": False, "width": 16},
+            {"id": "present", "label": "حاضر", "enabled": True, "custom": False, "width": 14},
+            {"id": "excused", "label": "غياب بعذر", "enabled": True, "custom": False, "width": 16},
+            {"id": "absent", "label": "غائب", "enabled": True, "custom": False, "width": 14},
+            {"id": "notApplicable", "label": "لا ينطبق", "enabled": True, "custom": False, "width": 16},
+            {"id": "rate", "label": "نسبة الحضور", "enabled": True, "custom": False, "width": 16},
+        ],
+    },
+    "progress": {
+        "columns": [
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
+            {"id": "entries", "label": "عدد سجلات المتابعة", "enabled": True, "custom": False, "width": 20},
+            {"id": "quality", "label": "متوسط التقييم", "enabled": True, "custom": False, "width": 18},
+            {"id": "mistakes", "label": "إجمالي الأخطاء", "enabled": True, "custom": False, "width": 18},
+            {"id": "latestRange", "label": "آخر مقدار", "enabled": True, "custom": False, "width": 28},
+        ],
+    },
+}
 
 
 def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
@@ -45,6 +75,19 @@ def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
         return DEFAULT_ATTENDANCE_STATUSES.copy()
     normalized = [value.strip() for value in values if isinstance(value, str) and value.strip()]
     return normalized or DEFAULT_ATTENDANCE_STATUSES.copy()
+
+
+def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
+    try:
+        values = json.loads(tahfiz.excel_export_templates)
+    except (AttributeError, TypeError, ValueError):
+        values = {}
+    if not isinstance(values, dict):
+        values = {}
+    return {
+        key: values.get(key) if isinstance(values.get(key), dict) else json.loads(json.dumps(default))
+        for key, default in DEFAULT_EXCEL_EXPORT_TEMPLATES.items()
+    }
 
 
 def excused_absence_reset_status_options(tahfiz: "Tahfiz") -> list[str]:
@@ -196,6 +239,11 @@ class Tahfiz(Base):
     attendance_status_colors: Mapped[str] = mapped_column(
         Text,
         default=lambda: json.dumps(DEFAULT_ATTENDANCE_STATUS_COLORS, ensure_ascii=False),
+        nullable=False,
+    )
+    excel_export_templates: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_EXCEL_EXPORT_TEMPLATES, ensure_ascii=False),
         nullable=False,
     )
     attendance_streak_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

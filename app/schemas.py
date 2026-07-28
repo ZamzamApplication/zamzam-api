@@ -79,6 +79,7 @@ class TahfizOut(BaseModel):
         "غياب بعذر": "amber",
         "لا ينطبق": "sky",
     }
+    excel_export_templates: dict = {}
     whatsend_enabled: bool = True
 
     class Config:
@@ -310,6 +311,18 @@ class UpdateFeedbackStatusRequest(BaseModel):
         return value.strip() or None if value is not None else None
 
 
+class ExcelExportColumnSettings(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=80)
+    enabled: bool = True
+    custom: bool = False
+    width: int = Field(default=18, ge=8, le=60)
+
+
+class ExcelExportTemplateSettings(BaseModel):
+    columns: list[ExcelExportColumnSettings] = Field(min_length=1, max_length=30)
+
+
 class UpdateTahfizSettingsRequest(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -327,6 +340,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     attendance_streak_reset_statuses: list[str] | None = None
     attendance_status_colors: dict[str, str] | None = None
+    excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = None
     whatsend_groups_url: str | None = None
     whatsend_api_key: str | None = None

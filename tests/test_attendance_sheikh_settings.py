@@ -1,4 +1,4 @@
-from app.models import Tahfiz, TahfizStatus
+from app.models import DEFAULT_EXCEL_EXPORT_TEMPLATES, Tahfiz, TahfizStatus
 from app.routers.management import serialize_tahfiz
 from app.schemas import UpdateTahfizSettingsRequest
 
@@ -29,3 +29,15 @@ def test_attendance_status_renames_are_accepted_in_settings_request():
     )
 
     assert request.attendance_status_renames == {"غياب": "متغيب"}
+
+
+def test_excel_export_templates_default_for_existing_tahfiz():
+    tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
+
+    assert serialize_tahfiz(tahfiz)["excel_export_templates"] == DEFAULT_EXCEL_EXPORT_TEMPLATES
+
+
+def test_excel_export_template_columns_are_validated():
+    request = UpdateTahfizSettingsRequest(excel_export_templates=DEFAULT_EXCEL_EXPORT_TEMPLATES)
+
+    assert request.excel_export_templates["attendance"].columns[0].id == "student"

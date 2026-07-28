@@ -47,6 +47,8 @@ from app.models import (
     attendance_status_color_options,
     attendance_streak_status_option,
     ATTENDANCE_STATUS_COLOR_KEYS,
+    DEFAULT_EXCEL_EXPORT_TEMPLATES,
+    excel_export_template_options,
     excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
@@ -1017,6 +1019,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "month_start_day": tahfiz.month_start_day,
         "attendance_statuses": attendance_status_options(tahfiz),
         "attendance_status_colors": attendance_status_color_options(tahfiz),
+        "excel_export_templates": excel_export_template_options(tahfiz),
         "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
         "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
@@ -1130,6 +1133,47 @@ async def update_tahfiz_settings(
     if tahfiz.attendance_status_colors != serialized_colors:
         tahfiz.attendance_status_colors = serialized_colors
         changed_fields.append("attendance_status_colors")
+    if body.excel_export_templates is not None:
+        requested_templates = {
+            key: template.model_dump()
+            for key, template in body.excel_export_templates.items()
+        }
+        if set(requested_templates) != set(DEFAULT_EXCEL_EXPORT_TEMPLATES):
+            raise HTTPException(status_code=400, detail="Invalid Excel export templates")
+        normalized_templates: dict[str, dict] = {}
+        for template_key, template in requested_templates.items():
+            allowed_standard_ids = {
+                column["id"]
+                for column in DEFAULT_EXCEL_EXPORT_TEMPLATES[template_key]["columns"]
+            }
+            seen_ids: set[str] = set()
+            normalized_columns: list[dict] = []
+            for column in template["columns"]:
+                column_id = column["id"].strip()
+                label = column["label"].strip()
+                is_custom = column["custom"]
+                if (
+                    not label
+                    or column_id in seen_ids
+                    or (is_custom and not column_id.startswith("custom_"))
+                    or (not is_custom and column_id not in allowed_standard_ids)
+                ):
+                    raise HTTPException(status_code=400, detail="Invalid Excel export template columns")
+                seen_ids.add(column_id)
+                normalized_columns.append({
+                    "id": column_id,
+                    "label": label,
+                    "enabled": column["enabled"],
+                    "custom": is_custom,
+                    "width": column["width"],
+                })
+            if not any(column["enabled"] for column in normalized_columns):
+                raise HTTPException(status_code=400, detail="At least one Excel column must be enabled")
+            normalized_templates[template_key] = {"columns": normalized_columns}
+        serialized_templates = json.dumps(normalized_templates, ensure_ascii=False)
+        if tahfiz.excel_export_templates != serialized_templates:
+            tahfiz.excel_export_templates = serialized_templates
+            changed_fields.append("excel_export_templates")
     requested_limit = body.attendance_streak_limit if body.attendance_streak_limit is not None else body.excused_absence_streak_limit
     if requested_limit is not None:
         if tahfiz.excused_absence_streak_limit != requested_limit:

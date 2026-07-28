@@ -25,6 +25,7 @@ from app.models import (
     attendance_status_options,
     attendance_status_color_options,
     attendance_streak_status_option,
+    excel_export_template_options,
     excused_absence_reset_status_options,
 )
 from app.schemas import (
@@ -476,6 +477,7 @@ async def get_me(
             "month_start_day": tahfiz.month_start_day,
             "attendance_statuses": attendance_status_options(tahfiz),
             "attendance_status_colors": attendance_status_color_options(tahfiz),
+            "excel_export_templates": excel_export_template_options(tahfiz),
             "excused_absence_streak_limit": tahfiz.excused_absence_streak_limit,
             "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
             "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
