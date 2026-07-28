@@ -1045,6 +1045,7 @@ async def update_tahfiz_settings(
 ):
     tahfiz = context.tahfiz
     changed_fields: list[str] = []
+    previous_statuses = attendance_status_options(tahfiz)
     for field in ("name", "description", "contact_phone", "max_warnings", "whatsend_api_url", "whatsend_groups_url"):
         value = getattr(body, field)
         if value is not None:
@@ -1075,6 +1076,29 @@ async def update_tahfiz_settings(
             tahfiz.attendance_statuses = serialized_statuses
             changed_fields.append("attendance_statuses")
     final_statuses = attendance_status_options(tahfiz)
+    if body.attendance_status_renames:
+        normalized_renames = {
+            source.strip(): target.strip()
+            for source, target in body.attendance_status_renames.items()
+            if source.strip() != target.strip()
+        }
+        if (
+            len(normalized_renames) > 20
+            or any(source not in previous_statuses for source in normalized_renames)
+            or any(not target or len(target) > 50 or target not in final_statuses for target in normalized_renames.values())
+        ):
+            raise HTTPException(status_code=400, detail="Invalid attendance status renames")
+        for source, target in normalized_renames.items():
+            await db.execute(
+                sa_update(Attendance)
+                .where(
+                    Attendance.tahfiz_id == context.tahfiz_id,
+                    Attendance.status == source,
+                )
+                .values(status=target, revision=Attendance.revision + 1, updated_at=datetime.utcnow())
+            )
+        if normalized_renames:
+            changed_fields.append("attendance_status_renames")
     if body.attendance_streak_alert_enabled is not None and tahfiz.attendance_streak_alert_enabled != body.attendance_streak_alert_enabled:
         tahfiz.attendance_streak_alert_enabled = body.attendance_streak_alert_enabled
         changed_fields.append("attendance_streak_alert_enabled")

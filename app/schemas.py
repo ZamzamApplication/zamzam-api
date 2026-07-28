@@ -318,6 +318,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     week_start_day: int | None = None
     month_start_day: int | None = None
     attendance_statuses: list[str] | None = None
+    attendance_status_renames: dict[str, str] | None = None
     excused_absence_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     excused_absence_reset_statuses: list[str] | None = None
     attendance_streak_alert_enabled: bool | None = None

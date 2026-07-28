@@ -20,3 +20,12 @@ def test_attendance_sheikh_selector_can_be_disabled_in_settings_request():
     request = UpdateTahfizSettingsRequest(attendance_sheikh_selection_enabled=False)
 
     assert request.attendance_sheikh_selection_enabled is False
+
+
+def test_attendance_status_renames_are_accepted_in_settings_request():
+    request = UpdateTahfizSettingsRequest(
+        attendance_statuses=["حاضر", "متغيب"],
+        attendance_status_renames={"غياب": "متغيب"},
+    )
+
+    assert request.attendance_status_renames == {"غياب": "متغيب"}
