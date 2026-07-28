@@ -329,6 +329,20 @@ class ExcelExportColumnSettings(BaseModel):
 
 class ExcelExportTemplateSettings(BaseModel):
     columns: list[ExcelExportColumnSettings] = Field(min_length=1, max_length=30)
+    header_font_family: str = Field(default="Arial", min_length=1, max_length=80)
+    header_font_size: int = Field(default=12, ge=6, le=72)
+    header_bold: bool = True
+    header_background_color: str = Field(default="#FFFFFF", pattern=r"^#[0-9A-Fa-f]{6}$")
+    header_font_color: str = Field(default="#000000", pattern=r"^#[0-9A-Fa-f]{6}$")
+    attendance_date_format: Literal[
+        "day",
+        "day_month",
+        "day_month_year",
+        "weekday",
+        "weekday_day",
+        "weekday_day_month",
+        "weekday_day_month_year",
+    ] = "weekday_day_month_year"
 
 
 class UpdateTahfizSettingsRequest(BaseModel):

@@ -36,14 +36,28 @@ DEFAULT_ATTENDANCE_STATUS_COLORS = {
 }
 DEFAULT_EXCEL_EXPORT_TEMPLATES = {
     "attendance": {
+        "header_font_family": "Arial",
+        "header_font_size": 12,
+        "header_bold": True,
+        "header_background_color": "#FFFFFF",
+        "header_font_color": "#000000",
+        "attendance_date_format": "weekday_day_month_year",
         "columns": [
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
             {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
             {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20},
             {"id": "attendance", "label": "الحضور", "enabled": True, "custom": False, "width": 18},
         ],
     },
     "statistics": {
+        "header_font_family": "Arial",
+        "header_font_size": 12,
+        "header_bold": True,
+        "header_background_color": "#FFFFFF",
+        "header_font_color": "#000000",
+        "attendance_date_format": "weekday_day_month_year",
         "columns": [
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
             {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
             {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20},
             {"id": "sessions", "label": "إجمالي الحلقات", "enabled": True, "custom": False, "width": 16},
@@ -55,7 +69,14 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         ],
     },
     "progress": {
+        "header_font_family": "Arial",
+        "header_font_size": 12,
+        "header_bold": True,
+        "header_background_color": "#FFFFFF",
+        "header_font_color": "#000000",
+        "attendance_date_format": "weekday_day_month_year",
         "columns": [
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
             {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
             {"id": "entries", "label": "عدد سجلات المتابعة", "enabled": True, "custom": False, "width": 20},
             {"id": "quality", "label": "متوسط التقييم", "enabled": True, "custom": False, "width": 18},
@@ -84,10 +105,29 @@ def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
         values = {}
     if not isinstance(values, dict):
         values = {}
-    return {
-        key: values.get(key) if isinstance(values.get(key), dict) else json.loads(json.dumps(default))
-        for key, default in DEFAULT_EXCEL_EXPORT_TEMPLATES.items()
-    }
+    templates: dict[str, dict] = {}
+    for key, default in DEFAULT_EXCEL_EXPORT_TEMPLATES.items():
+        configured = values.get(key)
+        if not isinstance(configured, dict) or not isinstance(configured.get("columns"), list):
+            templates[key] = json.loads(json.dumps(default))
+            continue
+        template = json.loads(json.dumps(configured))
+        for setting, setting_default in default.items():
+            if setting != "columns" and setting not in template:
+                template[setting] = setting_default
+        configured_ids = {
+            column.get("id")
+            for column in template["columns"]
+            if isinstance(column, dict)
+        }
+        missing_columns = [
+            json.loads(json.dumps(column))
+            for column in default["columns"]
+            if column["id"] not in configured_ids
+        ]
+        template["columns"] = missing_columns + template["columns"]
+        templates[key] = template
+    return templates
 
 
 def excused_absence_reset_status_options(tahfiz: "Tahfiz") -> list[str]:

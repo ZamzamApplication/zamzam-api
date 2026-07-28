@@ -1142,6 +1142,9 @@ async def update_tahfiz_settings(
             raise HTTPException(status_code=400, detail="Invalid Excel export templates")
         normalized_templates: dict[str, dict] = {}
         for template_key, template in requested_templates.items():
+            header_font_family = template["header_font_family"].strip()
+            if not header_font_family:
+                raise HTTPException(status_code=400, detail="Invalid Excel header font")
             allowed_standard_ids = {
                 column["id"]
                 for column in DEFAULT_EXCEL_EXPORT_TEMPLATES[template_key]["columns"]
@@ -1186,7 +1189,15 @@ async def update_tahfiz_settings(
                 })
             if not any(column["enabled"] for column in normalized_columns):
                 raise HTTPException(status_code=400, detail="At least one Excel column must be enabled")
-            normalized_templates[template_key] = {"columns": normalized_columns}
+            normalized_templates[template_key] = {
+                "columns": normalized_columns,
+                "header_font_family": header_font_family,
+                "header_font_size": template["header_font_size"],
+                "header_bold": template["header_bold"],
+                "header_background_color": template["header_background_color"].upper(),
+                "header_font_color": template["header_font_color"].upper(),
+                "attendance_date_format": template["attendance_date_format"],
+            }
         serialized_templates = json.dumps(normalized_templates, ensure_ascii=False)
         if tahfiz.excel_export_templates != serialized_templates:
             tahfiz.excel_export_templates = serialized_templates
