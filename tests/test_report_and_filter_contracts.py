@@ -1,9 +1,10 @@
 import unittest
+from collections import Counter
 from datetime import date, datetime
 
 from app.models import DEFAULT_ATTENDANCE_STATUSES, Tahfiz, TahfizStatus, User, UserRole, attendance_status_options
 from app.routers.auth import TenantContext
-from app.routers.reports import circle_attendance_rate
+from app.routers.reports import attendance_report_metrics, circle_attendance_rate
 from app.routers.saved_filters import create_saved_filter, list_saved_filters
 from app.schemas import CreateSavedFilterRequest
 
@@ -112,6 +113,28 @@ class AttendanceStatusSettingsTests(unittest.TestCase):
             attendance_statuses='[" حاضر ", "عن بعد"]',
         )
         self.assertEqual(attendance_status_options(tahfiz), ["حاضر", "عن بعد"])
+
+    def test_report_metrics_follow_renamed_statuses_and_preserve_order(self):
+        tahfiz = Tahfiz(
+            name="Tenant",
+            status=TahfizStatus.active,
+            attendance_statuses='["موجود", "متغيب", "بعذر", "عن بعد"]',
+            attendance_status_colors='{"موجود":"green","متغيب":"slate","بعذر":"amber","عن بعد":"violet"}',
+        )
+
+        metrics = attendance_report_metrics(
+            Counter({"موجود": 4, "متغيب": 2, "بعذر": 1, "عن بعد": 3}),
+            tahfiz,
+        )
+
+        self.assertEqual(
+            metrics["status_counts"],
+            {"موجود": 4, "متغيب": 2, "بعذر": 1, "عن بعد": 3},
+        )
+        self.assertEqual(metrics["total_records"], 10)
+        self.assertEqual(metrics["attendance_rate"], 50.0)
+        self.assertEqual(metrics["present"], 4)
+        self.assertEqual(metrics["excused"], 1)
 
 
 class SavedFilterTenantContractTests(unittest.IsolatedAsyncioTestCase):

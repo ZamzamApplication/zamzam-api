@@ -7,10 +7,56 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.media import signed_media_url
-from app.models import Attendance, AttendanceStatus, Session, Sheikh, Student, StudentStatus, StudentWarning
+from app.models import (
+    Attendance,
+    AttendanceStatus,
+    Session,
+    Sheikh,
+    Student,
+    StudentStatus,
+    StudentWarning,
+    attendance_status_color_options,
+    attendance_status_options,
+    excel_export_template_options,
+)
 from app.routers.auth import TenantContext, get_tenant_context
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+def attendance_report_metrics(counts, tahfiz) -> dict:
+    configured_statuses = attendance_status_options(tahfiz)
+    configured_colors = attendance_status_color_options(tahfiz)
+    ordered_statuses = list(configured_statuses)
+    ordered_statuses.extend(status for status in counts if status not in ordered_statuses)
+    status_counts = {status: counts.get(status, 0) for status in ordered_statuses}
+
+    def status_with_role(default_label: str, color: str) -> str | None:
+        if default_label in ordered_statuses:
+            return default_label
+        return next(
+            (status for status in ordered_statuses if configured_colors.get(status) == color),
+            None,
+        )
+
+    present_status = status_with_role(AttendanceStatus.present.value, "green")
+    excused_status = status_with_role(AttendanceStatus.excused.value, "amber")
+    absent_status = status_with_role(AttendanceStatus.absent.value, "slate")
+    excluded_status = status_with_role(AttendanceStatus.not_applicable.value, "sky")
+    applicable_statuses = [status for status in ordered_statuses if status != excluded_status]
+    attended_statuses = {status for status in (present_status, excused_status) if status}
+    applicable = sum(status_counts[status] for status in applicable_statuses)
+    attended = sum(status_counts[status] for status in attended_statuses)
+    return {
+        "status_counts": status_counts,
+        "total_records": sum(status_counts.values()),
+        "total_applicable": applicable,
+        "attendance_rate": round(attended / applicable * 100, 1) if applicable else 0,
+        "present": status_counts.get(present_status, 0) if present_status else 0,
+        "excused": status_counts.get(excused_status, 0) if excused_status else 0,
+        "absent": status_counts.get(absent_status, 0) if absent_status else 0,
+        "not_applicable": status_counts.get(excluded_status, 0) if excluded_status else 0,
+    }
 
 
 @router.get("/dashboard-summary")
@@ -58,6 +104,9 @@ async def list_circles(
             "week_start_day": context.tahfiz.week_start_day,
             "month_start_day": context.tahfiz.month_start_day,
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
+            "attendance_statuses": attendance_status_options(context.tahfiz),
+            "attendance_status_colors": attendance_status_color_options(context.tahfiz),
+            "excel_export_templates": excel_export_template_options(context.tahfiz),
         }
     ]
 
@@ -82,13 +131,14 @@ async def circle_attendance_rate(
     student_ids = [row[0] for row in result.all()]
 
     if not student_ids:
+        empty_metrics = attendance_report_metrics({}, context.tahfiz)
         return {
             "circle_id": circle_id,
             "total_attendance_records": 0,
-            "present": 0,
-            "absent": 0,
-            "excused": 0,
-            "attendance_rate": 0,
+            "total_applicable_records": 0,
+            **{key: empty_metrics[key] for key in (
+                "status_counts", "present", "absent", "excused", "not_applicable", "attendance_rate"
+            )},
         }
 
     att_query = (
@@ -109,30 +159,18 @@ async def circle_attendance_rate(
     for att in att_rows:
         student_attendance[att.student_id][att.status] += 1
 
-    total_present = 0
-    total_excused = 0
-    total_absent = 0
-
-    for sid in student_ids:
-        counts = student_attendance[sid]
-        present = counts.get(AttendanceStatus.present, 0)
-        excused = counts.get(AttendanceStatus.excused, 0)
-        absent_records = counts.get(AttendanceStatus.absent, 0)
-        total_present += present
-        total_excused += excused
-        total_absent += absent_records
-
-    total_applicable = total_present + total_excused + total_absent
-    attended = total_present + total_excused
-    rate = round((attended / total_applicable * 100), 1) if total_applicable > 0 else 0
+    total_counts = Counter()
+    for counts in student_attendance.values():
+        total_counts.update(counts)
+    metrics = attendance_report_metrics(total_counts, context.tahfiz)
 
     return {
         "circle_id": circle_id,
-        "total_attendance_records": total_applicable,
-        "present": total_present,
-        "absent": total_absent,
-        "excused": total_excused,
-        "attendance_rate": rate,
+        "total_attendance_records": metrics["total_records"],
+        "total_applicable_records": metrics["total_applicable"],
+        **{key: metrics[key] for key in (
+            "status_counts", "present", "absent", "excused", "not_applicable", "attendance_rate"
+        )},
     }
 
 
@@ -178,28 +216,18 @@ async def circle_student_stats(
     students_data = []
     for row in rows:
         counts = student_attendance[row.id]
-        present = counts.get(AttendanceStatus.present, 0)
-        excused = counts.get(AttendanceStatus.excused, 0)
-        absent_records = counts.get(AttendanceStatus.absent, 0)
-        not_applicable = counts.get(AttendanceStatus.not_applicable, 0)
-        total_records = present + excused + absent_records + not_applicable
-
-        absent = absent_records
-        total_applicable = present + excused + absent_records
-
-        rate = round((present + excused) / total_applicable * 100, 1) if total_applicable > 0 else 0
+        metrics = attendance_report_metrics(counts, context.tahfiz)
 
         students_data.append({
             "student_id": row.id,
             "student_name": row.name,
             "profile_pic": signed_media_url(row.profile_pic, context.tahfiz_id),
             "sheikh_name": row.sheikh_name,
-            "total_sessions": total_records,
-            "present": present,
-            "excused": excused,
-            "absent": absent,
-            "not_applicable": not_applicable,
-            "attendance_rate": rate,
+            "total_sessions": metrics["total_records"],
+            "total_applicable_sessions": metrics["total_applicable"],
+            **{key: metrics[key] for key in (
+                "status_counts", "present", "excused", "absent", "not_applicable", "attendance_rate"
+            )},
         })
 
     return {"circle_id": circle_id, "students": students_data}

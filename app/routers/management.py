@@ -1151,6 +1151,8 @@ async def update_tahfiz_settings(
                 column["id"]
                 for column in DEFAULT_EXCEL_EXPORT_TEMPLATES[template_key]["columns"]
             }
+            if template_key == "statistics":
+                allowed_standard_ids.update({"present", "excused", "absent", "notApplicable"})
             seen_ids: set[str] = set()
             normalized_columns: list[dict] = []
             for column in template["columns"]:
