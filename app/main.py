@@ -1,9 +1,11 @@
 import logging
 import os
 import asyncio
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -13,6 +15,7 @@ from sqlalchemy import text
 from app.database import async_session, init_db
 from app.backup_scheduler import backup_loop
 from app.media import validate_media_token
+from app.routers.auth import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
 from app.routers import auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback
 from app.seed import seed_data
 
@@ -43,6 +46,32 @@ app.include_router(invitations.router)
 app.include_router(sync.router)
 app.include_router(feedback.router)
 
+CSRF_EXEMPT_PATHS = {
+    "/auth/login",
+    "/auth/signup",
+    "/auth/refresh",
+    "/auth/revoke-device",
+}
+
+
+@app.middleware("http")
+async def enforce_cookie_csrf(request: Request, call_next):
+    cookie_authenticated = bool(request.cookies.get(ACCESS_COOKIE_NAME))
+    bearer_authenticated = request.headers.get("authorization", "").lower().startswith("bearer ")
+    invitation_registration = request.url.path.startswith("/invitations/register/")
+    if (
+        request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and cookie_authenticated
+        and not bearer_authenticated
+        and request.url.path not in CSRF_EXEMPT_PATHS
+        and not invitation_registration
+    ):
+        cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+        header_token = request.headers.get("x-csrf-token", "")
+        if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+            return JSONResponse(status_code=403, content={"detail": "Invalid CSRF token"})
+    return await call_next(request)
+
 
 @app.get("/uploads/{filepath:path}")
 async def serve_upload(filepath: str, token: str):
@@ -68,9 +97,7 @@ async def startup():
     security_issues = settings.security_issues()
     if security_issues and production:
         message = "Unsafe production security configuration: " + "; ".join(security_issues)
-        if settings.STRICT_SECURITY_VALIDATION:
-            raise RuntimeError(message)
-        logger.critical("%s. Set STRICT_SECURITY_VALIDATION=true after correcting it.", message)
+        raise RuntimeError(message)
     await init_db()
     await seed_data()
     backup_task = asyncio.create_task(backup_loop(), name="sqlite-backup-loop")

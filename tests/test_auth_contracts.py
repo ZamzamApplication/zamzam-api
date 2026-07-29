@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from jose import jwt
+from jwt import decode as jwt_decode
 
 from app.config import settings
 from app.models import Tahfiz, TahfizStatus, User, UserRole, UserTahfizMembership
@@ -83,7 +83,7 @@ class AccessTokenTests(unittest.TestCase):
             "tahfiz_id": 7,
         })
 
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt_decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
         self.assertEqual(payload["sub"], "teacher")
         self.assertEqual(payload["role"], "sheikh")

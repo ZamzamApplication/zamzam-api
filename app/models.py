@@ -6,6 +6,7 @@ from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.time import utcnow
 
 
 class StudentStatus(str, enum.Enum):
@@ -261,6 +262,7 @@ class User(Base):
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
     default_tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True)
+    auth_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     tahfiz: Mapped["Tahfiz | None"] = relationship("Tahfiz", foreign_keys=[tahfiz_id], back_populates="users")
     memberships: Mapped[list["UserTahfizMembership"]] = relationship(
@@ -323,7 +325,7 @@ class Tahfiz(Base):
     whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     whatsend_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     progress_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
     users: Mapped[list["User"]] = relationship("User", foreign_keys=[User.tahfiz_id], back_populates="tahfiz")
@@ -367,7 +369,7 @@ class UserTahfizMembership(Base):
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     user: Mapped[User] = relationship("User", foreign_keys=[user_id], back_populates="memberships")
     tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="memberships")
@@ -386,7 +388,7 @@ class TahfizInvitation(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     used_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
@@ -447,7 +449,7 @@ class StudentWarning(Base):
     warning_number: Mapped[int] = mapped_column(Integer, nullable=False)
     sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     student: Mapped[Student] = relationship("Student", back_populates="warnings")
 
@@ -478,7 +480,7 @@ class Session(Base):
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reopened_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     reopened_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     tahfiz: Mapped[Tahfiz] = relationship("Tahfiz")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="session", cascade="all, delete-orphan")
@@ -500,7 +502,7 @@ class Attendance(Base):
     status: Mapped[str] = mapped_column(String(100), default=AttendanceStatus.absent.value, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     session: Mapped[Session] = relationship("Session", back_populates="attendance_records")
     student: Mapped[Student] = relationship("Student", back_populates="attendance_records")
@@ -515,7 +517,7 @@ class SavedFilter(Base):
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     data: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AttendanceBatchOperation(Base):
@@ -529,7 +531,7 @@ class AttendanceBatchOperation(Base):
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
     resulting_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class QuranProgressEntry(Base):
@@ -557,8 +559,8 @@ class QuranProgressEntry(Base):
     mistakes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_assignment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
@@ -577,7 +579,7 @@ class QuranProgressRevision(Base):
     editor_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     before_json: Mapped[str] = mapped_column(Text, nullable=False)
     after_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class StudentGoal(Base):
@@ -601,8 +603,8 @@ class StudentGoal(Base):
     status: Mapped[StudentGoalStatus] = mapped_column(Enum(StudentGoalStatus), default=StudentGoalStatus.active, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class AuditLog(Base):
@@ -613,7 +615,7 @@ class AuditLog(Base):
     tahfiz_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class FeedbackReport(Base):
@@ -654,11 +656,11 @@ class FeedbackReport(Base):
         nullable=True,
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utcnow,
+        onupdate=utcnow,
         nullable=False,
     )
 
@@ -675,9 +677,18 @@ class DeviceSession(Base):
     device_id: Mapped[str] = mapped_column(String(100), nullable=False)
     device_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class AuthRateLimit(Base):
+    __tablename__ = "auth_rate_limits"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
 
 
 class SyncChange(Base):
@@ -692,7 +703,7 @@ class SyncChange(Base):
     entity_key: Mapped[str] = mapped_column(String(160), nullable=False)
     operation: Mapped[str] = mapped_column(String(10), nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class SyncMutationReceipt(Base):
@@ -706,4 +717,4 @@ class SyncMutationReceipt(Base):
     mutation_id: Mapped[str] = mapped_column(String(64), nullable=False)
     device_id: Mapped[str] = mapped_column(String(100), nullable=False)
     result_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

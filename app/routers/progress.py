@@ -7,6 +7,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.time import utcnow
 from app.models import (
     AuditLog,
     ProgressCategory,
@@ -222,7 +223,7 @@ async def save_session_progress(
             "mistakes": item.mistakes,
             "notes": item.notes,
             "next_assignment": item.next_assignment,
-            "updated_at": datetime.utcnow(),
+            "updated_at": utcnow(),
         }
         existing = existing_by_key.get((item.student_id, category.value))
         before = progress_snapshot(existing) if existing else None
@@ -407,7 +408,7 @@ async def update_student_goal(
             goal.status = StudentGoalStatus(body.status)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid goal status")
-        goal.completed_at = datetime.utcnow() if goal.status == StudentGoalStatus.completed else None
+        goal.completed_at = utcnow() if goal.status == StudentGoalStatus.completed else None
     await db.commit()
     return serialize_goal(goal)
 

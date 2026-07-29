@@ -22,7 +22,8 @@ from app.config import settings
 from app.attendance_streaks import attendance_status_streak
 from app.database import get_db
 
-from app.integrations import encrypt_secret, tenant_whatsend_config
+from app.integrations import encrypt_secret, tenant_whatsend_config, validate_whatsend_url
+from app.time import utcnow
 from app.media import signed_media_url
 from app.models import (
     Attendance,
@@ -127,6 +128,7 @@ async def send_whatsend_group_message(tahfiz: Tahfiz, group_id: str, message: st
     api_url, _, api_key = tenant_whatsend_config(tahfiz)
     if not api_key:
         raise RuntimeError("مفتاح WhatSend API غير مضبوط")
+    await validate_whatsend_url(api_url)
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             api_url,
@@ -140,6 +142,7 @@ async def fetch_whatsend_groups(tahfiz: Tahfiz) -> list[dict]:
     _, groups_url, api_key = tenant_whatsend_config(tahfiz)
     if not api_key:
         raise RuntimeError("مفتاح WhatSend API غير مضبوط")
+    await validate_whatsend_url(groups_url)
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             groups_url,
@@ -771,7 +774,7 @@ async def add_and_send_warning(
         raise HTTPException(status_code=502, detail=f"فشل إرسال الإنذار: {whatsend_error(e)}")
 
     warning.sent = True
-    warning.sent_at = datetime.utcnow()
+    warning.sent_at = utcnow()
     await db.commit()
     await db.refresh(warning)
     return {
@@ -929,7 +932,7 @@ async def send_warnings(
             continue
 
         warning.sent = True
-        warning.sent_at = datetime.utcnow()
+        warning.sent_at = utcnow()
         await db.commit()
         results.append({"warning_id": wid, "success": True})
 
@@ -1053,6 +1056,11 @@ async def update_tahfiz_settings(
         value = getattr(body, field)
         if value is not None:
             normalized = value.strip() if isinstance(value, str) else value
+            if field in {"whatsend_api_url", "whatsend_groups_url"} and normalized:
+                try:
+                    await validate_whatsend_url(normalized)
+                except (OSError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
             if getattr(tahfiz, field) != normalized:
                 setattr(tahfiz, field, normalized)
                 changed_fields.append(field)
@@ -1098,7 +1106,7 @@ async def update_tahfiz_settings(
                     Attendance.tahfiz_id == context.tahfiz_id,
                     Attendance.status == source,
                 )
-                .values(status=target, revision=Attendance.revision + 1, updated_at=datetime.utcnow())
+                .values(status=target, revision=Attendance.revision + 1, updated_at=utcnow())
             )
         if normalized_renames:
             changed_fields.append("attendance_status_renames")
@@ -1376,10 +1384,11 @@ async def update_user(
         user.username = body.username
     if body.password is not None:
         user.password_hash = pwd_context.hash(body.password)
+        user.auth_version += 1
         await db.execute(
             sa_update(DeviceSession)
             .where(DeviceSession.user_id == user.id, DeviceSession.revoked_at.is_(None))
-            .values(revoked_at=datetime.utcnow())
+            .values(revoked_at=utcnow())
         )
     if body.role is not None:
         if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
@@ -1599,7 +1608,7 @@ async def export_tahfiz(
 
     return {
         "format": "zamzam-tahfiz-export-v1",
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": utcnow().isoformat(),
         "tahfiz": serialize_tahfiz(context.tahfiz),
         "users": [
             {

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     WHATSEND_API_URL: str = "http://localhost:8000/api/send"
     WHATSEND_API_GROUPS_URL: str = ""
+    WHATSEND_ALLOWED_HOSTS: str = ""
     WHATSEND_API_KEY: str = ""
     INTEGRATION_ENCRYPTION_KEY: str = "change-this-in-production"
 
@@ -28,13 +29,24 @@ class Settings(BaseSettings):
     SIGNUP_RATE_LIMIT_ATTEMPTS: int = 5
     SIGNUP_RATE_LIMIT_WINDOW_SECONDS: int = 3600
 
-    # Enable only after real production secrets have been installed. Until then,
-    # startup emits high-visibility warnings without taking the existing service down.
-    STRICT_SECURITY_VALIDATION: bool = False
-
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def whatsend_allowed_hosts(self) -> set[str]:
+        from urllib.parse import urlparse
+
+        configured = {
+            host.strip().lower()
+            for host in self.WHATSEND_ALLOWED_HOSTS.split(",")
+            if host.strip()
+        }
+        for url in (self.WHATSEND_API_URL, self.WHATSEND_API_GROUPS_URL):
+            hostname = urlparse(url).hostname if url else None
+            if hostname:
+                configured.add(hostname.lower())
+        return configured
 
     def security_issues(self) -> list[str]:
         issues: list[str] = []

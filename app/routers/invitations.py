@@ -2,7 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,12 +19,15 @@ from app.models import (
 )
 from app.routers.auth import (
     TenantContext,
+    check_rate_limit,
+    clear_rate_limit,
     client_ip,
     create_access_token,
     get_current_user_depends,
     pwd_context,
-    rate_limiter,
+    record_rate_limit,
     require_tenant_admin,
+    set_web_session,
 )
 from app.schemas import CreateTahfizInvitationRequest, InvitationRegistrationRequest
 
@@ -181,15 +184,17 @@ async def register_with_invitation(
     token: str,
     body: InvitationRegistrationRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     rate_key = f"invite-register:{client_ip(request)}"
-    rate_limiter.check(
+    await check_rate_limit(
+        db,
         rate_key,
         settings.SIGNUP_RATE_LIMIT_ATTEMPTS,
         settings.SIGNUP_RATE_LIMIT_WINDOW_SECONDS,
     )
-    rate_limiter.record(rate_key)
+    await record_rate_limit(db, rate_key, settings.SIGNUP_RATE_LIMIT_WINDOW_SECONDS)
     username = body.username.strip()
     if len(username) < 3 or len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Username must be 3+ characters and password 8+ characters")
@@ -248,14 +253,17 @@ async def register_with_invitation(
         details=f"invitation={invitation.id}; role={invitation.role.value}",
     ))
     await db.commit()
-    rate_limiter.clear(rate_key)
+    await clear_rate_limit(db, rate_key)
+    access_token = create_access_token({
+        "sub": str(user.id),
+        "uid": user.id,
+        "username": user.username,
+        "role": user.role.value,
+        "ver": user.auth_version,
+    })
+    set_web_session(response, access_token)
     return {
-        "access_token": create_access_token({
-            "sub": str(user.id),
-            "uid": user.id,
-            "username": user.username,
-            "role": user.role.value,
-        }),
+        "access_token": access_token,
         "token_type": "bearer",
     }
 

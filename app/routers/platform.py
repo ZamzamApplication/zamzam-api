@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.time import utcnow
 from app.models import AuditLog, Sheikh, Tahfiz, TahfizStatus, User, UserRole, UserTahfizMembership
 from app.routers.auth import require_super_admin
 from app.schemas import PlatformTahfizActionRequest, UpsertUserTahfizMembershipRequest
@@ -233,7 +234,7 @@ async def set_status(
     tahfiz.status = next_status
     tahfiz.status_reason = body.reason
     if next_status == TahfizStatus.active:
-        tahfiz.approved_at = datetime.utcnow()
+        tahfiz.approved_at = utcnow()
         tahfiz.approved_by_id = admin.id
     db.add(AuditLog(
         actor_user_id=admin.id,

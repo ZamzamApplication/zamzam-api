@@ -1,21 +1,21 @@
-from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import os
 import secrets
-from time import monotonic
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from jwt import InvalidTokenError, decode as jwt_decode, encode as jwt_encode
 from passlib.context import CryptContext
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.models import (
     AuditLog,
+    AuthRateLimit,
     DeviceSession,
     Tahfiz,
     TahfizStatus,
@@ -38,45 +38,71 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ACCESS_COOKIE_NAME = "zamzam_access"
+CSRF_COOKIE_NAME = "zamzam_csrf"
 # Fixed non-secret hash used only to keep invalid-login timing uniform.
 DUMMY_PASSWORD_HASH = "$2b$12$4z4Ywktu8JVT1WHg0GCS0uccQT3JwUbOQPUK3UGo3xadxsaJvtN1O"
 __all__ = ["pwd_context"]
 
 
-class InMemoryRateLimiter:
-    """Small per-process limiter; production edge limiting can be layered on later."""
-
-    def __init__(self) -> None:
-        self._attempts: dict[str, deque[float]] = defaultdict(deque)
-
-    def check(self, key: str, limit: int, window_seconds: int) -> None:
-        now = monotonic()
-        attempts = self._attempts.get(key)
-        if not attempts:
-            return
-        while attempts and attempts[0] <= now - window_seconds:
-            attempts.popleft()
-        if not attempts:
-            self._attempts.pop(key, None)
-            return
-        if len(attempts) >= limit:
-            retry_after = max(1, int(window_seconds - (now - attempts[0])))
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many attempts. Please try again later.",
-                headers={"Retry-After": str(retry_after)},
-            )
-
-    def record(self, key: str) -> None:
-        self._attempts[key].append(monotonic())
-
-    def clear(self, key: str) -> None:
-        self._attempts.pop(key, None)
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-rate_limiter = InMemoryRateLimiter()
+def rate_limit_hash(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+async def check_rate_limit(
+    db: AsyncSession,
+    key: str,
+    limit: int,
+    window_seconds: int,
+) -> None:
+    now = utcnow()
+    key_hash = rate_limit_hash(key)
+    entry = await db.get(AuthRateLimit, key_hash)
+    if not entry or entry.expires_at <= now:
+        return
+    if entry.attempts >= limit:
+        retry_after = max(1, int((entry.expires_at - now).total_seconds()))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+async def record_rate_limit(
+    db: AsyncSession,
+    key: str,
+    window_seconds: int,
+) -> None:
+    now = utcnow()
+    key_hash = rate_limit_hash(key)
+    entry = await db.get(AuthRateLimit, key_hash)
+    if not entry or entry.expires_at <= now:
+        if entry:
+            await db.delete(entry)
+        db.add(AuthRateLimit(
+            key_hash=key_hash,
+            attempts=1,
+            window_started_at=now,
+            expires_at=now + timedelta(seconds=window_seconds),
+        ))
+    else:
+        entry.attempts += 1
+    await db.execute(delete(AuthRateLimit).where(AuthRateLimit.expires_at <= now))
+    await db.commit()
+
+
+async def clear_rate_limit(db: AsyncSession, key: str) -> None:
+    await db.execute(delete(AuthRateLimit).where(
+        AuthRateLimit.key_hash == rate_limit_hash(key)
+    ))
+    await db.commit()
 
 
 def client_ip(request: Request) -> str:
@@ -104,7 +130,35 @@ def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return jwt_encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def set_web_session(response: Response, token: str) -> None:
+    production = settings.APP_ENV.lower() == "production" or bool(os.getenv("FLY_APP_NAME"))
+    max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    response.set_cookie(
+        ACCESS_COOKIE_NAME,
+        token,
+        max_age=max_age,
+        httponly=True,
+        secure=production,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        secrets.token_urlsafe(32),
+        max_age=max_age,
+        httponly=False,
+        secure=production,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_web_session(response: Response) -> None:
+    response.delete_cookie(ACCESS_COOKIE_NAME, path="/")
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
 def refresh_token_hash(token: str) -> str:
@@ -113,7 +167,7 @@ def refresh_token_hash(token: str) -> str:
 
 def issue_refresh_token(user_id: int, device_id: str, device_name: str | None = None) -> tuple[str, DeviceSession]:
     raw_token = secrets.token_urlsafe(48)
-    now = datetime.utcnow()
+    now = utcnow()
     return raw_token, DeviceSession(
         user_id=user_id,
         token_hash=refresh_token_hash(raw_token),
@@ -131,6 +185,7 @@ def token_response(user: User, refresh_token: str | None = None) -> Token:
         "uid": user.id,
         "username": user.username,
         "role": user.role.value,
+        "ver": user.auth_version,
     })
     return Token(
         access_token=token,
@@ -141,11 +196,11 @@ def token_response(user: User, refresh_token: str | None = None) -> Token:
 
 async def get_current_user(token: str, db: AsyncSession) -> User:
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt_decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         subject = payload.get("sub")
         if subject is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     # Tokens issued from this version use an immutable numeric subject. The
@@ -158,14 +213,20 @@ async def get_current_user(token: str, db: AsyncSession) -> User:
     user = result.scalar_one_or_none()
     if user is None or user.is_active is False:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if payload.get("ver", 0) != user.auth_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session has been revoked")
     return user
 
 
 async def get_current_user_depends(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    return await get_current_user(credentials.credentials, db)
+    token = credentials.credentials if credentials else request.cookies.get(ACCESS_COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return await get_current_user(token, db)
 
 
 async def require_admin(current_user: User = Depends(get_current_user_depends)) -> User:
@@ -259,11 +320,24 @@ async def require_tenant_admin(context: TenantContext = Depends(get_tenant_conte
 
 
 @router.post("/login", response_model=Token)
-async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     username = body.username.strip()
-    rate_key = f"login:{client_ip(request)}"
-    rate_limiter.check(
-        rate_key,
+    ip_rate_key = f"login-ip:{client_ip(request)}"
+    account_rate_key = f"login-account:{username.casefold()}"
+    await check_rate_limit(
+        db,
+        ip_rate_key,
+        settings.LOGIN_RATE_LIMIT_ATTEMPTS,
+        settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    )
+    await check_rate_limit(
+        db,
+        account_rate_key,
         settings.LOGIN_RATE_LIMIT_ATTEMPTS,
         settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
     )
@@ -274,10 +348,12 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         user.password_hash if user and user.is_active is not False else DUMMY_PASSWORD_HASH,
     )
     if not user or user.is_active is False or not password_matches:
-        rate_limiter.record(rate_key)
+        await record_rate_limit(db, ip_rate_key, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS)
+        await record_rate_limit(db, account_rate_key, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    rate_limiter.clear(rate_key)
+    await clear_rate_limit(db, ip_rate_key)
+    await clear_rate_limit(db, account_rate_key)
     refresh_token = None
     if body.device_id:
         refresh_token, device_session = issue_refresh_token(
@@ -294,16 +370,19 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
                 DeviceSession.device_id == body.device_id,
                 DeviceSession.revoked_at.is_(None),
             )
-            .values(revoked_at=datetime.utcnow())
+            .values(revoked_at=utcnow())
         )
         db.add(device_session)
         await db.commit()
-    return token_response(user, refresh_token)
+    token = token_response(user, refresh_token)
+    if not body.device_id:
+        set_web_session(response, token.access_token)
+    return token
 
 
 @router.post("/refresh", response_model=Token)
 async def refresh_access_token(body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
-    now = datetime.utcnow()
+    now = utcnow()
     device_session = await db.scalar(select(DeviceSession).where(
         DeviceSession.token_hash == refresh_token_hash(body.refresh_token),
         DeviceSession.device_id == body.device_id,
@@ -335,19 +414,36 @@ async def revoke_device(body: RevokeDeviceRequest, db: AsyncSession = Depends(ge
         DeviceSession.revoked_at.is_(None),
     ))
     if session:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = utcnow()
         await db.commit()
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    response: Response,
+    user: User = Depends(get_current_user_depends),
+    db: AsyncSession = Depends(get_db),
+):
+    user.auth_version += 1
+    await db.execute(
+        update(DeviceSession)
+        .where(DeviceSession.user_id == user.id, DeviceSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    await db.commit()
+    clear_web_session(response)
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depends(get_db)):
     rate_key = f"signup:{client_ip(request)}"
-    rate_limiter.check(
+    await check_rate_limit(
+        db,
         rate_key,
         settings.SIGNUP_RATE_LIMIT_ATTEMPTS,
         settings.SIGNUP_RATE_LIMIT_WINDOW_SECONDS,
     )
-    rate_limiter.record(rate_key)
+    await record_rate_limit(db, rate_key, settings.SIGNUP_RATE_LIMIT_WINDOW_SECONDS)
     username = body.username.strip()
     tahfiz_name = body.tahfiz_name.strip()
     if len(username) < 3 or len(body.password) < 8 or len(tahfiz_name) < 2:
@@ -384,6 +480,7 @@ async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depen
     ))
     tahfiz.owner_user_id = owner.id
     await db.commit()
+    await clear_rate_limit(db, rate_key)
     return {
         "message": "Signup request submitted for approval",
         "tahfiz_id": tahfiz.id,

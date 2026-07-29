@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.time import utcnow
 from app.media import signed_media_url
 from app.models import (
     Attendance,
@@ -420,7 +421,7 @@ async def reopen_session(
         )
         .values(
             is_confirmed=False,
-            reopened_at=datetime.utcnow(),
+            reopened_at=utcnow(),
             reopened_reason=reason,
             reopened_by_id=context.user.id,
             version=Session.version + 1,

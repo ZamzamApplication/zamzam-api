@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -15,15 +16,15 @@ class ParentPhoneOut(BaseModel):
 
 
 class CreateParentPhone(BaseModel):
-    phone_number: str
-    parent_type: str
-    name: str | None = None
+    phone_number: str = Field(min_length=3, max_length=20)
+    parent_type: Literal["أب", "أم", "أخ", "أخت", "جد", "جدة", "أرضي"]
+    name: str | None = Field(default=None, max_length=100)
 
 
 class UpdateParentPhone(BaseModel):
-    phone_number: str | None = None
-    parent_type: str | None = None
-    name: str | None = None
+    phone_number: str | None = Field(default=None, min_length=3, max_length=20)
+    parent_type: Literal["أب", "أم", "أخ", "أخت", "جد", "جدة", "أرضي"] | None = None
+    name: str | None = Field(default=None, max_length=100)
 
 
 class Token(BaseModel):
@@ -34,8 +35,8 @@ class Token(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=50)
+    password: str = Field(min_length=1, max_length=200)
     device_id: str | None = Field(default=None, min_length=8, max_length=100)
     device_name: str | None = Field(default=None, max_length=100)
 
@@ -50,10 +51,10 @@ class RevokeDeviceRequest(BaseModel):
 
 
 class SignupRequest(BaseModel):
-    username: str
-    password: str
-    tahfiz_name: str
-    contact_phone: str | None = None
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=200)
+    tahfiz_name: str = Field(min_length=2, max_length=100)
+    contact_phone: str | None = Field(default=None, max_length=20)
 
 
 class TahfizOut(BaseModel):
@@ -65,21 +66,21 @@ class TahfizOut(BaseModel):
     max_warnings: int = 3
     week_start_day: int = 6
     month_start_day: int = 1
-    attendance_statuses: list[str] = ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"]
+    attendance_statuses: list[str] = Field(default_factory=lambda: ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"])
     excused_absence_streak_limit: int = 3
-    excused_absence_reset_statuses: list[str] = ["حاضر"]
+    excused_absence_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
     attendance_streak_alert_enabled: bool = True
     attendance_sheikh_selection_enabled: bool = True
     attendance_streak_status: str = "غياب بعذر"
     attendance_streak_limit: int = 3
-    attendance_streak_reset_statuses: list[str] = ["حاضر"]
-    attendance_status_colors: dict[str, str] = {
+    attendance_streak_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
+    attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
         "غياب بعذر": "amber",
         "لا ينطبق": "sky",
-    }
-    excel_export_templates: dict = {}
+    })
+    excel_export_templates: dict = Field(default_factory=dict)
     whatsend_enabled: bool = True
 
     class Config:
@@ -126,9 +127,9 @@ class StudentOut(BaseModel):
     profile_pic: str | None = None
     status: str = "مقيد"
     registration_date: date | None = None
-    warnings: list[WarningOut] = []
-    parent_phones: list[ParentPhoneOut] = []
-    excused_weekdays: list[ExcusedWeekdayOut] = []
+    warnings: list[WarningOut] = Field(default_factory=list)
+    parent_phones: list[ParentPhoneOut] = Field(default_factory=list)
+    excused_weekdays: list[ExcusedWeekdayOut] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -171,22 +172,22 @@ class SessionOut(BaseModel):
 
 
 class UpdateAttendanceRequest(BaseModel):
-    status: str
-    notes: str | None = None
+    status: str = Field(min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=2000)
     sheikh_id: int | None = None
 
 
 class UpsertAttendanceRequest(BaseModel):
     session_id: int
     student_id: int
-    status: str
-    notes: str | None = None
+    status: str = Field(min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=2000)
     sheikh_id: int | None = None
 
 
 class AttendanceBatchItem(BaseModel):
     student_id: int
-    status: str
+    status: str = Field(min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=2000)
     sheikh_id: int | None = None
 
@@ -201,7 +202,7 @@ class CreateSessionRequest(BaseModel):
     circle_id: int | None = None  # Legacy cached-client compatibility
     session_date: date
     session_time: time | None = None
-    default_status: str = "غياب"
+    default_status: str = Field(default="غياب", min_length=1, max_length=100)
 
 
 class UpdateSessionRequest(BaseModel):
@@ -219,25 +220,25 @@ class ConfirmSessionRequest(BaseModel):
 
 
 class CreateSheikhRequest(BaseModel):
-    name: str
-    phone: str | None = None
-    whatsapp_group_id: str | None = None
+    name: str = Field(min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    whatsapp_group_id: str | None = Field(default=None, max_length=255)
     circle_id: int | None = None  # Legacy cached-client compatibility
 
 
 class CreateStudentRequest(BaseModel):
-    name: str
-    phone: str | None = None
-    student_id: str | None = None
+    name: str = Field(min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    student_id: str | None = Field(default=None, max_length=50)
     birthday: date | None = None
-    status: str = "مقيد"
+    status: Literal["مقيد", "مستبعد", "منقطع", "ضيف", "غير مقيد"] = "مقيد"
     registration_date: date | None = None
     sheikh_id: int | None = None
-    parent_phones: list[CreateParentPhone] = []
+    parent_phones: list[CreateParentPhone] = Field(default_factory=list, max_length=20)
 
 
 class CreateWarningRequest(BaseModel):
-    reason: str
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class MoveStudentRequest(BaseModel):
@@ -245,43 +246,43 @@ class MoveStudentRequest(BaseModel):
 
 
 class ReorderStudentsRequest(BaseModel):
-    student_ids: list[int]
+    student_ids: list[int] = Field(max_length=1000)
 
 
 class UpdateTahfizRequest(BaseModel):
-    name: str
-    description: str | None = None
-    contact_phone: str | None = None
-    max_warnings: int = 3
-    week_start_day: int = 6
-    month_start_day: int = 1
-    attendance_statuses: list[str] | None = None
-    whatsend_api_url: str | None = None
-    whatsend_groups_url: str | None = None
-    whatsend_api_key: str | None = None
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    max_warnings: int = Field(default=3, ge=1, le=1000)
+    week_start_day: int = Field(default=6, ge=0, le=6)
+    month_start_day: int = Field(default=1, ge=1, le=28)
+    attendance_statuses: list[str] | None = Field(default=None, max_length=20)
+    whatsend_api_url: str | None = Field(default=None, max_length=500)
+    whatsend_groups_url: str | None = Field(default=None, max_length=500)
+    whatsend_api_key: str | None = Field(default=None, max_length=1000)
 
 
 class UpdateSheikhRequest(BaseModel):
-    name: str | None = None
-    phone: str | None = None
-    whatsapp_group_id: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    whatsapp_group_id: str | None = Field(default=None, max_length=255)
     circle_id: int | None = None  # Legacy cached-client compatibility
 
 
 class UpdateStudentRequest(BaseModel):
-    name: str | None = None
-    phone: str | None = None
-    student_id: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+    student_id: str | None = Field(default=None, max_length=50)
     birthday: date | None = None
-    profile_pic: str | None = None
-    status: str | None = None
+    profile_pic: str | None = Field(default=None, max_length=1000)
+    status: Literal["مقيد", "مستبعد", "منقطع", "ضيف", "غير مقيد"] | None = None
     registration_date: date | None = None
     sheikh_id: int | None = None
-    parent_phones: list[UpdateParentPhone] | None = None
+    parent_phones: list[UpdateParentPhone] | None = Field(default=None, max_length=20)
 
 
 class PlatformTahfizActionRequest(BaseModel):
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class CreateFeedbackRequest(BaseModel):
@@ -354,14 +355,14 @@ class ExcelExportTemplateSettings(BaseModel):
 
 
 class UpdateTahfizSettingsRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    contact_phone: str | None = None
-    max_warnings: int | None = None
-    week_start_day: int | None = None
-    month_start_day: int | None = None
-    attendance_statuses: list[str] | None = None
-    attendance_status_renames: dict[str, str] | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=20)
+    max_warnings: int | None = Field(default=None, ge=1, le=1000)
+    week_start_day: int | None = Field(default=None, ge=0, le=6)
+    month_start_day: int | None = Field(default=None, ge=1, le=28)
+    attendance_statuses: list[str] | None = Field(default=None, max_length=20)
+    attendance_status_renames: dict[str, str] | None = Field(default=None, max_length=20)
     excused_absence_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     excused_absence_reset_statuses: list[str] | None = None
     attendance_streak_alert_enabled: bool | None = None
@@ -371,9 +372,9 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_streak_reset_statuses: list[str] | None = None
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
-    whatsend_api_url: str | None = None
-    whatsend_groups_url: str | None = None
-    whatsend_api_key: str | None = None
+    whatsend_api_url: str | None = Field(default=None, max_length=500)
+    whatsend_groups_url: str | None = Field(default=None, max_length=500)
+    whatsend_api_key: str | None = Field(default=None, max_length=1000)
     whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
 
@@ -393,49 +394,75 @@ class SavedFilterOut(BaseModel):
 
 
 class CreateSavedFilterRequest(BaseModel):
-    name: str
-    data: str
+    name: str = Field(min_length=1, max_length=100)
+    data: str = Field(min_length=2, max_length=100_000)
+
+    @field_validator("data")
+    @classmethod
+    def validate_filter_json(cls, value: str) -> str:
+        parsed = json.loads(value)
+        if not isinstance(parsed, (dict, list)):
+            raise ValueError("Saved filter data must be a JSON object or list")
+        return value
 
 
 class UpdateSavedFilterRequest(BaseModel):
-    name: str | None = None
-    data: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    data: str | None = Field(default=None, min_length=2, max_length=100_000)
+
+    @field_validator("data")
+    @classmethod
+    def validate_filter_json(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = json.loads(value)
+        if not isinstance(parsed, (dict, list)):
+            raise ValueError("Saved filter data must be a JSON object or list")
+        return value
 
 
 class UpdateExcusedWeekday(BaseModel):
-    weekday: int
-    note: str | None = None
+    weekday: int = Field(ge=0, le=6)
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class UpdateExcusedWeekdaysRequest(BaseModel):
-    weekdays: list[UpdateExcusedWeekday | int]
+    weekdays: list[UpdateExcusedWeekday | int] = Field(max_length=7)
+
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekday_values(cls, values):
+        normalized = [value if isinstance(value, int) else value.weekday for value in values]
+        if any(value < 0 or value > 6 for value in normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("Weekdays must be unique values between 0 and 6")
+        return values
 
 
 class SendWarningsRequest(BaseModel):
-    warning_ids: list[int]
+    warning_ids: list[int] = Field(min_length=1, max_length=500)
 
 
 class SendStudentWarningRequest(BaseModel):
-    absent_dates: list[str]
+    absent_dates: list[str] = Field(min_length=1, max_length=500)
 
 
 class CreateUserRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "sheikh"
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=200)
+    role: Literal["admin", "sheikh"] = "sheikh"
     sheikh_id: int | None = None
 
 
 class UpdateUserRequest(BaseModel):
-    username: str | None = None
-    password: str | None = None
-    role: str | None = None
+    username: str | None = Field(default=None, min_length=3, max_length=50)
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+    role: Literal["admin", "sheikh"] | None = None
     sheikh_id: int | None = None
 
 
 class UpsertUserTahfizMembershipRequest(BaseModel):
     tahfiz_id: int
-    role: str = "admin"
+    role: Literal["admin", "sheikh"] = "admin"
     sheikh_id: int | None = None
 
 
@@ -444,18 +471,18 @@ class SetDefaultTahfizRequest(BaseModel):
 
 
 class CreateTahfizInvitationRequest(BaseModel):
-    role: str = "sheikh"
+    role: Literal["admin", "sheikh"] = "sheikh"
     sheikh_id: int | None = None
     expires_hours: int = Field(default=48, ge=1, le=168)
 
 
 class InvitationRegistrationRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=200)
 
 
 class QuranRangeInput(BaseModel):
-    range_type: str
+    range_type: Literal["surah_ayah", "page"]
     from_surah: int | None = Field(default=None, ge=1, le=114)
     from_ayah: int | None = Field(default=None, ge=1)
     to_surah: int | None = Field(default=None, ge=1, le=114)
@@ -482,7 +509,7 @@ class QuranRangeInput(BaseModel):
 
 class QuranProgressItem(QuranRangeInput):
     student_id: int
-    category: str
+    category: Literal["new_memorization", "recent_revision", "old_revision", "test"]
     sheikh_id: int | None = None
     quality_score: int = Field(ge=1, le=5)
     mistakes: int = Field(default=0, ge=0, le=1000)
@@ -502,7 +529,7 @@ class CreateStudentGoalRequest(QuranRangeInput):
 class UpdateStudentGoalRequest(BaseModel):
     target_date: date | None = None
     notes: str | None = Field(default=None, max_length=4000)
-    status: str | None = None
+    status: Literal["active", "completed", "cancelled"] | None = None
 
 
 class UserOut(BaseModel):

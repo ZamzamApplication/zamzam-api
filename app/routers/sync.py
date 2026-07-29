@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.time import utcnow
 from app.attendance_streaks import attendance_status_streak, threshold_alert_after_change
 from app.media import signed_media_url
 from app.models import (
@@ -173,7 +174,7 @@ async def bootstrap(
     return {
         "schema_version": 2,
         "cursor": await current_cursor(db, context.tahfiz_id),
-        "server_time": datetime.utcnow().isoformat(),
+        "server_time": utcnow().isoformat(),
         "tahfiz": {
             "id": context.tahfiz.id,
             "name": context.tahfiz.name,
@@ -303,7 +304,7 @@ async def apply_attendance(
         Sheikh.tahfiz_id == context.tahfiz_id,
     )):
         return {"status": "rejected", "code": "invalid_sheikh"}
-    now = datetime.utcnow()
+    now = utcnow()
     if row:
         row.status = status
         row.notes = values.get("notes")
@@ -393,7 +394,7 @@ async def apply_progress(
         "mistakes": item.mistakes,
         "notes": item.notes,
         "next_assignment": item.next_assignment,
-        "updated_at": datetime.utcnow(),
+        "updated_at": utcnow(),
     }
     if row:
         after = progress_snapshot(item)

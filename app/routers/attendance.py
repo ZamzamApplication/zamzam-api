@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.attendance_streaks import attendance_status_streak, threshold_alert_after_change
 from app.database import get_db
+from app.time import utcnow
 from app.models import Attendance, AttendanceBatchOperation, AuditLog, Session, Sheikh, Student, attendance_status_options
 from app.routers.auth import TenantContext, get_tenant_context
 from app.schemas import AttendanceBatchRequest, UpdateAttendanceRequest, UpsertAttendanceRequest
@@ -53,7 +54,7 @@ async def update_attendance(
     if body.sheikh_id is not None:
         attendance.sheikh_id = body.sheikh_id
     attendance.revision += 1
-    attendance.updated_at = datetime.utcnow()
+    attendance.updated_at = utcnow()
     session.version += 1
     await db.flush()
     alert = await threshold_alert_after_change(
@@ -121,7 +122,7 @@ async def upsert_attendance(
         if body.sheikh_id is not None:
             attendance.sheikh_id = body.sheikh_id
         attendance.revision += 1
-        attendance.updated_at = datetime.utcnow()
+        attendance.updated_at = utcnow()
     else:
         attendance = Attendance(
             session_id=body.session_id,
@@ -264,7 +265,7 @@ async def batch_attendance(
             "status": item.status,
             "notes": item.notes,
             "sheikh_id": item.sheikh_id,
-            "updated_at": datetime.utcnow(),
+            "updated_at": utcnow(),
         }
         statement = sqlite_insert(Attendance).values(**values)
         statement = statement.on_conflict_do_update(
