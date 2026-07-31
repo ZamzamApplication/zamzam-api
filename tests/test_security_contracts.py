@@ -1,7 +1,7 @@
 import importlib
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
@@ -14,6 +14,7 @@ from app.config import settings
 from app.integrations import validate_whatsend_url
 from app.main import enforce_cookie_csrf
 from app.routers.auth import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, set_web_session
+from app.routers.management import validate_whatsend_setting_url
 
 
 def request_for(path: str, method: str = "POST", headers: list[tuple[bytes, bytes]] | None = None) -> Request:
@@ -71,6 +72,20 @@ class CookieSessionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WhatSendUrlValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_integration_does_not_validate_inactive_url(self):
+        validator = AsyncMock()
+        with patch("app.routers.management.validate_whatsend_url", validator):
+            await validate_whatsend_setting_url(False, "http://legacy.example/send")
+
+        validator.assert_not_awaited()
+
+    async def test_enabled_integration_validates_configured_url(self):
+        validator = AsyncMock()
+        with patch("app.routers.management.validate_whatsend_url", validator):
+            await validate_whatsend_setting_url(True, "https://api.example.com/send")
+
+        validator.assert_awaited_once_with("https://api.example.com/send")
+
     async def test_production_rejects_plain_http(self):
         with (
             patch.dict(os.environ, {"FLY_APP_NAME": "zamzam-api"}),

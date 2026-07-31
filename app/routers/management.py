@@ -122,6 +122,12 @@ def whatsend_error(exc: Exception) -> str:
     return str(exc)
 
 
+async def validate_whatsend_setting_url(enabled: bool, url: str) -> None:
+    """Validate network destinations only while the integration is active."""
+    if enabled and url:
+        await validate_whatsend_url(url)
+
+
 async def send_whatsend_group_message(tahfiz: Tahfiz, group_id: str, message: str) -> None:
     if not tahfiz.whatsend_enabled:
         raise ValueError("تكامل واتساب غير مفعّل")
@@ -1052,13 +1058,14 @@ async def update_tahfiz_settings(
     tahfiz = context.tahfiz
     changed_fields: list[str] = []
     previous_statuses = attendance_status_options(tahfiz)
+    whatsend_enabled = body.whatsend_enabled if body.whatsend_enabled is not None else tahfiz.whatsend_enabled
     for field in ("name", "description", "contact_phone", "max_warnings", "whatsend_api_url", "whatsend_groups_url"):
         value = getattr(body, field)
         if value is not None:
             normalized = value.strip() if isinstance(value, str) else value
             if field in {"whatsend_api_url", "whatsend_groups_url"} and normalized:
                 try:
-                    await validate_whatsend_url(normalized)
+                    await validate_whatsend_setting_url(whatsend_enabled, normalized)
                 except (OSError, ValueError) as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
             if getattr(tahfiz, field) != normalized:
