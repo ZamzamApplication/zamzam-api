@@ -28,7 +28,7 @@ from app.models import (
     attendance_streak_status_option,
     excused_absence_reset_status_options,
 )
-from app.routers.auth import TenantContext, get_tenant_context
+from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.routers.progress import progress_snapshot
 from app.schemas import QuranProgressItem
 
@@ -150,26 +150,32 @@ async def bootstrap(
     session_ids = [row.id for row in sessions]
     students = (await db.execute(
         select(Student)
-        .where(Student.tahfiz_id == context.tahfiz_id)
+        .where(student_scope_clause(context))
         .order_by(Student.name)
     )).scalars().all()
+    student_ids = [row.id for row in students]
     sheikhs = (await db.execute(
         select(Sheikh)
-        .where(Sheikh.tahfiz_id == context.tahfiz_id)
+        .where(
+            Sheikh.tahfiz_id == context.tahfiz_id,
+            *([Sheikh.id == context.sheikh_id] if context.restricts_sheikh_students else []),
+        )
         .order_by(Sheikh.name)
     )).scalars().all()
     attendance = (await db.execute(
         select(Attendance).where(
             Attendance.tahfiz_id == context.tahfiz_id,
             Attendance.session_id.in_(session_ids),
+            Attendance.student_id.in_(student_ids),
         )
-    )).scalars().all() if session_ids else []
+    )).scalars().all() if session_ids and student_ids else []
     progress = (await db.execute(
         select(QuranProgressEntry).where(
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
             QuranProgressEntry.session_id.in_(session_ids),
+            QuranProgressEntry.student_id.in_(student_ids),
         )
-    )).scalars().all() if session_ids else []
+    )).scalars().all() if session_ids and student_ids else []
 
     return {
         "schema_version": 2,
@@ -184,6 +190,7 @@ async def bootstrap(
             "excused_absence_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
             "attendance_streak_alert_enabled": context.tahfiz.attendance_streak_alert_enabled,
             "attendance_sheikh_selection_enabled": context.tahfiz.attendance_sheikh_selection_enabled,
+            "restrict_sheikh_student_access": context.tahfiz.restrict_sheikh_student_access is not False,
             "attendance_streak_status": attendance_streak_status_option(context.tahfiz),
             "attendance_streak_limit": context.tahfiz.excused_absence_streak_limit,
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
@@ -199,28 +206,39 @@ async def bootstrap(
     }
 
 
-async def change_payload(db: AsyncSession, change: SyncChange) -> dict[str, Any] | None:
+async def change_payload(db: AsyncSession, change: SyncChange, context: TenantContext) -> dict[str, Any] | None:
     if change.operation == "delete":
         return None
     if change.entity_type == "attendance":
         row = await db.get(Attendance, int(change.entity_key))
-        return serialize_attendance(row) if row and row.tahfiz_id == change.tahfiz_id else None
+        visible = row and await db.scalar(select(Student.id).where(
+            Student.id == row.student_id,
+            student_scope_clause(context),
+        ))
+        return serialize_attendance(row) if visible and row.tahfiz_id == change.tahfiz_id else None
     if change.entity_type == "session":
         row = await db.get(Session, int(change.entity_key))
         return serialize_session(row) if row and row.tahfiz_id == change.tahfiz_id else None
     if change.entity_type == "student":
-        row = await db.get(Student, int(change.entity_key))
-        return serialize_student(row) if row and row.tahfiz_id == change.tahfiz_id else None
+        row = await db.scalar(select(Student).where(
+            Student.id == int(change.entity_key),
+            student_scope_clause(context),
+        ))
+        return serialize_student(row) if row else None
     if change.entity_type == "sheikh":
         row = await db.get(Sheikh, int(change.entity_key))
-        return serialize_sheikh(row) if row and row.tahfiz_id == change.tahfiz_id else None
+        visible = not context.restricts_sheikh_students or row and row.id == context.sheikh_id
+        return serialize_sheikh(row) if visible and row and row.tahfiz_id == change.tahfiz_id else None
     if change.entity_type == "quran_progress":
         session_id, student_id, category = change.entity_key.split(":", 2)
-        row = await db.scalar(select(QuranProgressEntry).where(
+        row = await db.scalar(select(QuranProgressEntry).join(
+            Student, Student.id == QuranProgressEntry.student_id
+        ).where(
             QuranProgressEntry.tahfiz_id == change.tahfiz_id,
             QuranProgressEntry.session_id == int(session_id),
             QuranProgressEntry.student_id == int(student_id),
             QuranProgressEntry.category == ProgressCategory(category),
+            student_scope_clause(context),
         ))
         return serialize_progress(row) if row else None
     return None
@@ -241,7 +259,7 @@ async def changes(
     )).scalars().all()
     items = []
     for row in rows:
-        payload = await change_payload(db, row)
+        payload = await change_payload(db, row, context)
         operation = row.operation if payload is not None else "delete"
         items.append({
             "cursor": row.id,
@@ -276,7 +294,7 @@ async def apply_attendance(
     ))
     student = await db.scalar(select(Student).where(
         Student.id == student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}
@@ -359,7 +377,7 @@ async def apply_progress(
     ))
     student = await db.scalar(select(Student).where(
         Student.id == item.student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}

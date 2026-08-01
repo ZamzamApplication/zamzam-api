@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jwt import InvalidTokenError, decode as jwt_decode, encode as jwt_encode
 from passlib.context import CryptContext
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, false, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -19,6 +19,7 @@ from app.models import (
     DeviceSession,
     Tahfiz,
     TahfizStatus,
+    Student,
     User,
     UserRole,
     UserTahfizMembership,
@@ -124,6 +125,25 @@ class TenantContext:
     @property
     def effective_role(self) -> UserRole:
         return self.role or self.user.role
+
+    @property
+    def restricts_sheikh_students(self) -> bool:
+        return (
+            self.effective_role == UserRole.sheikh
+            and self.tahfiz.restrict_sheikh_student_access is not False
+        )
+
+
+def student_scope_clause(context: TenantContext, student_model=Student):
+    """Tenant and optional assigned-sheikh boundary for every student query."""
+    clauses = [student_model.tahfiz_id == context.tahfiz_id]
+    if context.restricts_sheikh_students:
+        clauses.append(
+            student_model.sheikh_id == context.sheikh_id
+            if context.sheikh_id is not None
+            else false()
+        )
+    return and_(*clauses)
 
 
 def create_access_token(data: dict) -> str:
@@ -579,6 +599,7 @@ async def get_me(
             "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
             "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
             "attendance_sheikh_selection_enabled": tahfiz.attendance_sheikh_selection_enabled,
+            "restrict_sheikh_student_access": tahfiz.restrict_sheikh_student_access is not False,
             "attendance_streak_status": attendance_streak_status_option(tahfiz),
             "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),

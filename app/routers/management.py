@@ -37,6 +37,7 @@ from app.models import (
     Session,
     Sheikh,
     Student,
+    StudentExcusedPeriod,
     StudentGoal,
     StudentStatus,
     StudentWarning,
@@ -52,9 +53,10 @@ from app.models import (
     excel_export_template_options,
     excused_absence_reset_status_options,
 )
-from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin
+from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin, student_scope_clause
 from app.schemas import (
     CreateParentPhone,
+    CreateExcusedPeriodRequest,
     CreateSheikhRequest,
     CreateStudentRequest,
     CreateUserRequest,
@@ -63,8 +65,11 @@ from app.schemas import (
     ReorderStudentsRequest,
     SendStudentWarningRequest,
     SendWarningsRequest,
+    EarlyReturnRequest,
+    ExcusedPeriodOut,
     UpdateTahfizSettingsRequest,
     UpdateExcusedWeekdaysRequest,
+    UpdateExcusedPeriodRequest,
     UpdateParentPhone,
     UpdateSheikhRequest,
     UpdateStudentRequest,
@@ -78,6 +83,51 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_PROFILE_UPLOAD_BYTES = 10 * 1024 * 1024
 PROFILE_IMAGE_SIZE = (512, 512)
 PROFILE_IMAGE_QUALITY = 82
+
+
+def serialize_excused_period(period: StudentExcusedPeriod) -> dict:
+    today = utcnow().date()
+    if period.cancelled_at is not None:
+        status = "cancelled"
+    elif today < period.start_date:
+        status = "upcoming"
+    elif today <= period.end_date:
+        status = "active"
+    else:
+        status = "completed"
+    return {
+        "id": period.id,
+        "student_id": period.student_id,
+        "start_date": period.start_date.isoformat(),
+        "end_date": period.end_date.isoformat(),
+        "reason": period.reason,
+        "status": status,
+        "cancelled_at": period.cancelled_at.isoformat() if period.cancelled_at else None,
+        "created_at": period.created_at.isoformat(),
+        "updated_at": period.updated_at.isoformat(),
+    }
+
+
+async def ensure_no_excused_period_overlap(
+    db: AsyncSession,
+    tahfiz_id: int,
+    student_id: int,
+    start_date: date,
+    end_date: date,
+    *,
+    exclude_id: int | None = None,
+) -> None:
+    query = select(StudentExcusedPeriod.id).where(
+        StudentExcusedPeriod.tahfiz_id == tahfiz_id,
+        StudentExcusedPeriod.student_id == student_id,
+        StudentExcusedPeriod.cancelled_at.is_(None),
+        StudentExcusedPeriod.start_date <= end_date,
+        StudentExcusedPeriod.end_date >= start_date,
+    )
+    if exclude_id is not None:
+        query = query.where(StudentExcusedPeriod.id != exclude_id)
+    if await db.scalar(query):
+        raise HTTPException(status_code=409, detail={"code": "excused_period_overlap"})
 
 
 def build_warning_message(student_name: str, warning_number: int, reason: str, remaining: int) -> str:
@@ -222,7 +272,10 @@ async def list_sheikhs(
     result = await db.execute(
         select(Sheikh)
         .options(selectinload(Sheikh.tahfiz))
-        .where(Sheikh.tahfiz_id == context.tahfiz_id)
+        .where(
+            Sheikh.tahfiz_id == context.tahfiz_id,
+            *([Sheikh.id == context.sheikh_id] if context.restricts_sheikh_students else []),
+        )
     )
     sheikhs = result.scalars().all()
     return [
@@ -448,10 +501,11 @@ async def student_profile(
             selectinload(Student.parent_phones),
             selectinload(Student.warnings),
             selectinload(Student.excused_weekdays),
+            selectinload(Student.excused_periods),
         )
         .where(
             Student.id == student_id,
-            Student.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
         )
     )
     if not student:
@@ -509,6 +563,10 @@ async def student_profile(
         "excused_weekdays": [
             {"id": row.id, "weekday": row.weekday, "note": row.note}
             for row in sorted(student.excused_weekdays, key=lambda row: row.weekday)
+        ],
+        "excused_periods": [
+            serialize_excused_period(row)
+            for row in sorted(student.excused_periods, key=lambda row: (row.start_date, row.id), reverse=True)
         ],
         "warnings": [
             {
@@ -648,6 +706,7 @@ async def delete_student(
         select(Student)
         .options(
             selectinload(Student.attendance_records),
+            selectinload(Student.excused_periods),
         )
         .where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
@@ -983,6 +1042,161 @@ async def update_excused_weekdays(
     return {"weekdays": saved}
 
 
+@router.get("/students/{student_id}/excused-periods")
+async def get_excused_periods(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+) -> list[ExcusedPeriodOut]:
+    student = await db.scalar(select(Student.id).where(
+        Student.id == student_id,
+        student_scope_clause(context),
+    ))
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found")
+    periods = (await db.execute(
+        select(StudentExcusedPeriod).where(
+            StudentExcusedPeriod.student_id == student_id,
+            StudentExcusedPeriod.tahfiz_id == context.tahfiz_id,
+        ).order_by(StudentExcusedPeriod.start_date.desc(), StudentExcusedPeriod.id.desc())
+    )).scalars().all()
+    return [serialize_excused_period(period) for period in periods]
+
+
+@router.post("/students/{student_id}/excused-periods", status_code=201)
+async def create_excused_period(
+    student_id: int,
+    body: CreateExcusedPeriodRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+) -> ExcusedPeriodOut:
+    student = await db.scalar(select(Student).where(
+        Student.id == student_id,
+        Student.tahfiz_id == context.tahfiz_id,
+    ))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    await ensure_no_excused_period_overlap(
+        db, context.tahfiz_id, student_id, body.start_date, body.end_date
+    )
+    now = utcnow()
+    period = StudentExcusedPeriod(
+        student_id=student_id,
+        tahfiz_id=context.tahfiz_id,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        reason=body.reason,
+        created_by_id=context.user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(period)
+    await db.flush()
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.excused_period_created",
+        details=f"student={student_id}; period={period.id}; start={body.start_date}; end={body.end_date}; reason={body.reason}",
+    ))
+    await db.commit()
+    await db.refresh(period)
+    return serialize_excused_period(period)
+
+
+@router.put("/students/{student_id}/excused-periods/{period_id}")
+async def update_excused_period(
+    student_id: int,
+    period_id: int,
+    body: UpdateExcusedPeriodRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+) -> ExcusedPeriodOut:
+    period = await db.scalar(select(StudentExcusedPeriod).where(
+        StudentExcusedPeriod.id == period_id,
+        StudentExcusedPeriod.student_id == student_id,
+        StudentExcusedPeriod.tahfiz_id == context.tahfiz_id,
+    ))
+    if not period:
+        raise HTTPException(status_code=404, detail="Excused period not found")
+    if period.cancelled_at is not None:
+        raise HTTPException(status_code=409, detail={"code": "excused_period_cancelled"})
+    await ensure_no_excused_period_overlap(
+        db, context.tahfiz_id, student_id, body.start_date, body.end_date, exclude_id=period.id
+    )
+    period.start_date = body.start_date
+    period.end_date = body.end_date
+    period.reason = body.reason
+    period.updated_at = utcnow()
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.excused_period_updated",
+        details=f"student={student_id}; period={period.id}; start={body.start_date}; end={body.end_date}; reason={body.reason}",
+    ))
+    await db.commit()
+    return serialize_excused_period(period)
+
+
+@router.post("/students/{student_id}/excused-periods/{period_id}/cancel")
+async def cancel_excused_period(
+    student_id: int,
+    period_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+) -> ExcusedPeriodOut:
+    period = await db.scalar(select(StudentExcusedPeriod).where(
+        StudentExcusedPeriod.id == period_id,
+        StudentExcusedPeriod.student_id == student_id,
+        StudentExcusedPeriod.tahfiz_id == context.tahfiz_id,
+    ))
+    if not period:
+        raise HTTPException(status_code=404, detail="Excused period not found")
+    if period.cancelled_at is None:
+        period.cancelled_at = utcnow()
+        period.cancelled_by_id = context.user.id
+        period.updated_at = period.cancelled_at
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="student.excused_period_cancelled",
+            details=f"student={student_id}; period={period.id}",
+        ))
+        await db.commit()
+    return serialize_excused_period(period)
+
+
+@router.post("/students/{student_id}/excused-periods/{period_id}/early-return")
+async def end_excused_period_early(
+    student_id: int,
+    period_id: int,
+    body: EarlyReturnRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+) -> ExcusedPeriodOut:
+    period = await db.scalar(select(StudentExcusedPeriod).where(
+        StudentExcusedPeriod.id == period_id,
+        StudentExcusedPeriod.student_id == student_id,
+        StudentExcusedPeriod.tahfiz_id == context.tahfiz_id,
+    ))
+    if not period:
+        raise HTTPException(status_code=404, detail="Excused period not found")
+    if period.cancelled_at is not None:
+        raise HTTPException(status_code=409, detail={"code": "excused_period_cancelled"})
+    if body.end_date < period.start_date or body.end_date >= period.end_date:
+        raise HTTPException(status_code=400, detail={"code": "invalid_early_return_date"})
+    previous_end = period.end_date
+    period.end_date = body.end_date
+    period.updated_at = utcnow()
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.excused_period_ended_early",
+        details=f"student={student_id}; period={period.id}; previous_end={previous_end}; end={body.end_date}",
+    ))
+    await db.commit()
+    return serialize_excused_period(period)
+
+
 @router.post("/students/{student_id}/upload-pic")
 async def upload_student_pic(
     student_id: int,
@@ -1033,6 +1247,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "excused_absence_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "attendance_streak_alert_enabled": tahfiz.attendance_streak_alert_enabled,
         "attendance_sheikh_selection_enabled": tahfiz.attendance_sheikh_selection_enabled,
+        "restrict_sheikh_student_access": tahfiz.restrict_sheikh_student_access is not False,
         "attendance_streak_status": attendance_streak_status_option(tahfiz),
         "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
         "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
@@ -1123,6 +1338,9 @@ async def update_tahfiz_settings(
     if body.attendance_sheikh_selection_enabled is not None and tahfiz.attendance_sheikh_selection_enabled != body.attendance_sheikh_selection_enabled:
         tahfiz.attendance_sheikh_selection_enabled = body.attendance_sheikh_selection_enabled
         changed_fields.append("attendance_sheikh_selection_enabled")
+    if body.restrict_sheikh_student_access is not None and tahfiz.restrict_sheikh_student_access != body.restrict_sheikh_student_access:
+        tahfiz.restrict_sheikh_student_access = body.restrict_sheikh_student_access
+        changed_fields.append("restrict_sheikh_student_access")
     if body.attendance_streak_status is not None:
         tracked_status = body.attendance_streak_status.strip()
         if tracked_status not in final_statuses:
@@ -1527,69 +1745,13 @@ async def export_db(
     )
 
 
-def build_tenant_database(source_path: str, tahfiz_id: int) -> str:
-    fd, export_path = tempfile.mkstemp(prefix=f"zamzam-tahfiz-{tahfiz_id}-", suffix=".db")
-    os.close(fd)
-    source = sqlite3.connect(source_path)
-    destination = sqlite3.connect(export_path)
-    try:
-        source.backup(destination)
-        destination.execute("PRAGMA foreign_keys=OFF")
-        tables = {
-            row[0]
-            for row in destination.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-        statements = [
-            ("attendance", "DELETE FROM attendance WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
-            ("sessions", "DELETE FROM sessions WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("saved_filters", "DELETE FROM saved_filters WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("audit_logs", "DELETE FROM audit_logs WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
-            ("feedback_reports", "DELETE FROM feedback_reports WHERE tahfiz_id IS NULL OR tahfiz_id != ?", (tahfiz_id,)),
-            ("tahfiz_invitations", "DELETE FROM tahfiz_invitations WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("parent_phones", "DELETE FROM parent_phones WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
-            ("student_warnings", "DELETE FROM student_warnings WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
-            ("excused_weekdays", "DELETE FROM excused_weekdays WHERE student_id NOT IN (SELECT id FROM students WHERE tahfiz_id = ?)", (tahfiz_id,)),
-            ("students", "DELETE FROM students WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("user_tahfiz_memberships", "DELETE FROM user_tahfiz_memberships WHERE tahfiz_id != ?", (tahfiz_id,)),
-            (
-                "users",
-                "DELETE FROM users WHERE id NOT IN "
-                "(SELECT user_id FROM user_tahfiz_memberships WHERE tahfiz_id = ?) "
-                "AND (tahfiz_id IS NULL OR tahfiz_id != ?)",
-                (tahfiz_id, tahfiz_id),
-            ),
-            ("sheikhs", "DELETE FROM sheikhs WHERE tahfiz_id != ?", (tahfiz_id,)),
-            ("tahfiz", "DELETE FROM tahfiz WHERE id != ?", (tahfiz_id,)),
-        ]
-        for table, statement, parameters in statements:
-            if table in tables:
-                destination.execute(statement, parameters)
-        destination.commit()
-        destination.execute("PRAGMA journal_mode=DELETE")
-        destination.execute("VACUUM")
-    except Exception:
-        destination.close()
-        source.close()
-        os.unlink(export_path)
-        raise
-    destination.close()
-    source.close()
-    return export_path
-
-
 @router.get("/tahfiz/export-db")
 async def export_tahfiz_database(
-    context: TenantContext = Depends(require_tenant_admin),
+    _context: TenantContext = Depends(require_tenant_admin),
 ):
-    db_path = database_file_path()
-    if not os.path.isfile(db_path):
-        raise HTTPException(status_code=404, detail="Database file not found")
-    export_path = await asyncio.to_thread(build_tenant_database, db_path, context.tahfiz_id)
-    return FileResponse(
-        export_path,
-        media_type="application/vnd.sqlite3",
-        filename="zamzam_backup.db",
-        background=BackgroundTask(os.unlink, export_path),
+    raise HTTPException(
+        status_code=503,
+        detail="Tenant database export is temporarily unavailable",
     )
 
 
@@ -1612,6 +1774,7 @@ async def export_tahfiz(
     parent_phones = (await db.execute(select(ParentPhone).where(ParentPhone.student_id.in_(student_ids)))).scalars().all() if student_ids else []
     warnings = (await db.execute(select(StudentWarning).where(StudentWarning.student_id.in_(student_ids)))).scalars().all() if student_ids else []
     excused = (await db.execute(select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids)))).scalars().all() if student_ids else []
+    excused_periods = (await db.execute(select(StudentExcusedPeriod).where(StudentExcusedPeriod.student_id.in_(student_ids)))).scalars().all() if student_ids else []
 
     return {
         "format": "zamzam-tahfiz-export-v1",
@@ -1650,4 +1813,5 @@ async def export_tahfiz(
             "created_at": row.created_at.isoformat(),
         } for row in warnings],
         "excused_weekdays": [{"id": row.id, "student_id": row.student_id, "weekday": row.weekday, "note": row.note} for row in excused],
+        "excused_periods": [serialize_excused_period(row) for row in excused_periods],
     }

@@ -9,7 +9,7 @@ from app.attendance_streaks import attendance_status_streak, threshold_alert_aft
 from app.database import get_db
 from app.time import utcnow
 from app.models import Attendance, AttendanceBatchOperation, AuditLog, Session, Sheikh, Student, attendance_status_options
-from app.routers.auth import TenantContext, get_tenant_context
+from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.schemas import AttendanceBatchRequest, UpdateAttendanceRequest, UpsertAttendanceRequest
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -22,6 +22,8 @@ async def update_attendance(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
+    if context.restricts_sheikh_students and body.sheikh_id is not None and body.sheikh_id != context.sheikh_id:
+        raise HTTPException(status_code=404, detail="Sheikh not found")
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(
             Sheikh.id == body.sheikh_id,
@@ -36,6 +38,11 @@ async def update_attendance(
     ))
     attendance = result.scalar_one_or_none()
     if not attendance:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    if not await db.scalar(select(Student.id).where(
+        Student.id == attendance.student_id,
+        student_scope_clause(context),
+    )):
         raise HTTPException(status_code=404, detail="Attendance record not found")
     allowed_statuses = attendance_status_options(context.tahfiz)
     if body.status not in allowed_statuses and body.status != attendance.status:
@@ -80,6 +87,8 @@ async def upsert_attendance(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
+    if context.restricts_sheikh_students and body.sheikh_id is not None and body.sheikh_id != context.sheikh_id:
+        raise HTTPException(status_code=404, detail="Sheikh not found")
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(
             Sheikh.id == body.sheikh_id,
@@ -94,7 +103,7 @@ async def upsert_attendance(
     ))
     student = await db.scalar(select(Student).where(
         Student.id == body.student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not session or not student:
         raise HTTPException(status_code=404, detail="Session or student not found")
@@ -197,7 +206,7 @@ async def batch_attendance(
     valid_student_ids = set((await db.execute(
         select(Student.id).where(
             Student.id.in_(student_ids),
-            Student.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
         )
     )).scalars().all())
     if valid_student_ids != student_ids:
@@ -205,6 +214,8 @@ async def batch_attendance(
 
     sheikh_ids = {item.sheikh_id for item in body.updates if item.sheikh_id is not None}
     if sheikh_ids:
+        if context.restricts_sheikh_students and sheikh_ids != {context.sheikh_id}:
+            raise HTTPException(status_code=404, detail="One or more sheikhs were not found")
         valid_sheikh_ids = set((await db.execute(
             select(Sheikh.id).where(
                 Sheikh.id.in_(sheikh_ids),
@@ -251,7 +262,7 @@ async def batch_attendance(
     student_names = dict((await db.execute(
         select(Student.id, Student.name).where(
             Student.id.in_(student_ids),
-            Student.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
         )
     )).all())
     allowed_statuses = attendance_status_options(context.tahfiz)

@@ -19,7 +19,7 @@ from app.models import (
     attendance_status_options,
     excel_export_template_options,
 )
-from app.routers.auth import TenantContext, get_tenant_context
+from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -65,11 +65,14 @@ async def dashboard_summary(
     context: TenantContext = Depends(get_tenant_context),
 ):
     tahfiz_id = context.tahfiz_id
+    sheikh_count_query = select(func.count(Sheikh.id)).where(Sheikh.tahfiz_id == tahfiz_id)
+    if context.restricts_sheikh_students:
+        sheikh_count_query = sheikh_count_query.where(Sheikh.id == context.sheikh_id)
     result = await db.execute(
         select(
-            select(func.count(Sheikh.id)).where(Sheikh.tahfiz_id == tahfiz_id).scalar_subquery(),
+            sheikh_count_query.scalar_subquery(),
             select(func.count(Student.id)).where(
-                Student.tahfiz_id == tahfiz_id,
+                student_scope_clause(context),
                 Student.status == StudentStatus.enrolled,
             ).scalar_subquery(),
             select(func.count(Session.id)).where(Session.tahfiz_id == tahfiz_id).scalar_subquery(),
@@ -104,6 +107,7 @@ async def list_circles(
             "week_start_day": context.tahfiz.week_start_day,
             "month_start_day": context.tahfiz.month_start_day,
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
+            "restrict_sheikh_student_access": context.tahfiz.restrict_sheikh_student_access is not False,
             "attendance_statuses": attendance_status_options(context.tahfiz),
             "attendance_status_colors": attendance_status_color_options(context.tahfiz),
             "excel_export_templates": excel_export_template_options(context.tahfiz),
@@ -126,7 +130,7 @@ async def circle_attendance_rate(
     tahfiz_id = context.tahfiz_id
     result = await db.execute(
         select(Student.id)
-        .where(Student.tahfiz_id == tahfiz_id, Student.status == StudentStatus.enrolled)
+        .where(student_scope_clause(context), Student.status == StudentStatus.enrolled)
     )
     student_ids = [row[0] for row in result.all()]
 
@@ -134,6 +138,7 @@ async def circle_attendance_rate(
         empty_metrics = attendance_report_metrics({}, context.tahfiz)
         return {
             "circle_id": circle_id,
+            "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
             "total_attendance_records": 0,
             "total_applicable_records": 0,
             **{key: empty_metrics[key] for key in (
@@ -166,6 +171,7 @@ async def circle_attendance_rate(
 
     return {
         "circle_id": circle_id,
+        "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
         "total_attendance_records": metrics["total_records"],
         "total_applicable_records": metrics["total_applicable"],
         **{key: metrics[key] for key in (
@@ -188,7 +194,7 @@ async def circle_student_stats(
     result = await db.execute(
         select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
-        .where(Student.tahfiz_id == tahfiz_id, Student.status == StudentStatus.enrolled)
+        .where(student_scope_clause(context), Student.status == StudentStatus.enrolled)
         .order_by(Student.name)
     )
     rows = result.all()
@@ -230,7 +236,11 @@ async def circle_student_stats(
             )},
         })
 
-    return {"circle_id": circle_id, "students": students_data}
+    return {
+        "circle_id": circle_id,
+        "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
+        "students": students_data,
+    }
 
 
 @router.get("/student/{student_id}/streak")
@@ -241,7 +251,7 @@ async def student_streak(
 ):
     student = await db.scalar(select(Student.id).where(
         Student.id == student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -312,6 +322,10 @@ async def attendance_grid(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
+    if context.restricts_sheikh_students:
+        if sheikh_id is not None and sheikh_id != context.sheikh_id:
+            raise HTTPException(status_code=404, detail="Sheikh not found")
+        sheikh_id = context.sheikh_id
     # Get confirmed sessions ordered by date
     query = select(Session).where(Session.is_confirmed == True)
     query = query.where(Session.tahfiz_id == context.tahfiz_id)
@@ -335,13 +349,13 @@ async def attendance_grid(
     sessions = list(reversed(result.scalars().all()))
 
     # Get students
-    if sheikh_id:
+    if sheikh_id is not None:
         result = await db.execute(
             select(Student)
             .options(selectinload(Student.sheikh))
             .where(
                 Student.sheikh_id == sheikh_id,
-                Student.tahfiz_id == context.tahfiz_id,
+                student_scope_clause(context),
                 Student.status == StudentStatus.enrolled,
             )
             .order_by(Student.name)
@@ -354,7 +368,7 @@ async def attendance_grid(
             select(Student)
             .outerjoin(Sheikh)
             .options(selectinload(Student.sheikh))
-            .where(Student.status == StudentStatus.enrolled, Student.tahfiz_id == context.tahfiz_id)
+            .where(Student.status == StudentStatus.enrolled, student_scope_clause(context))
             .order_by(Student.name)
         )
         students = result.scalars().all()
@@ -362,7 +376,11 @@ async def attendance_grid(
         student_map = {s.id: s for s in students}
 
     if not student_ids or not sessions:
-        return {"sessions": [], "students": []}
+        return {
+            "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
+            "sessions": [],
+            "students": [],
+        }
 
     # Get all attendance records for these students in these sessions
     session_ids = [s.id for s in sessions]
@@ -413,6 +431,7 @@ async def attendance_grid(
         })
 
     return {
+        "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
         "sessions": [{"id": s.id, "date": s.date.isoformat(), "circle_id": s.tahfiz_id, "tahfiz_id": s.tahfiz_id} for s in sessions],
         "students": students_data,
     }

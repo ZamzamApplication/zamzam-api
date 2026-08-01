@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from app.backup import create_backup, restore_backup, verify_backup
+from app.routers.management import export_tahfiz_database
 
 
 class BackupRestoreTests(unittest.TestCase):
@@ -34,3 +37,11 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertEqual(manifest["format"], 1)
             self.assertEqual(value, "safe")
             self.assertEqual((restored_uploads / "proof.txt").read_text(encoding="utf-8"), "uploaded")
+
+
+class TenantDatabaseExportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tenant_database_export_is_disabled(self):
+        with self.assertRaises(HTTPException) as raised:
+            await export_tahfiz_database(None)
+
+        self.assertEqual(raised.exception.status_code, 503)

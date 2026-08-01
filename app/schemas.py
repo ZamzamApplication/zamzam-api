@@ -71,6 +71,7 @@ class TahfizOut(BaseModel):
     excused_absence_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
     attendance_streak_alert_enabled: bool = True
     attendance_sheikh_selection_enabled: bool = True
+    restrict_sheikh_student_access: bool = True
     attendance_streak_status: str = "غياب بعذر"
     attendance_streak_limit: int = 3
     attendance_streak_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
@@ -118,6 +119,43 @@ class ExcusedWeekdayOut(BaseModel):
         from_attributes = True
 
 
+class ExcusedPeriodOut(BaseModel):
+    id: int
+    student_id: int
+    start_date: date
+    end_date: date
+    reason: str
+    status: Literal["upcoming", "active", "completed", "cancelled"]
+    cancelled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateExcusedPeriodRequest(BaseModel):
+    start_date: date
+    end_date: date
+    reason: str = Field(min_length=2, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.end_date < self.start_date:
+            raise ValueError("End date must be on or after start date")
+        return self
+
+
+class UpdateExcusedPeriodRequest(CreateExcusedPeriodRequest):
+    pass
+
+
+class EarlyReturnRequest(BaseModel):
+    end_date: date
+
+
 class StudentOut(BaseModel):
     id: int
     name: str
@@ -130,6 +168,7 @@ class StudentOut(BaseModel):
     warnings: list[WarningOut] = Field(default_factory=list)
     parent_phones: list[ParentPhoneOut] = Field(default_factory=list)
     excused_weekdays: list[ExcusedWeekdayOut] = Field(default_factory=list)
+    excused_periods: list[ExcusedPeriodOut] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -367,6 +406,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     excused_absence_reset_statuses: list[str] | None = None
     attendance_streak_alert_enabled: bool | None = None
     attendance_sheikh_selection_enabled: bool | None = None
+    restrict_sheikh_student_access: bool | None = None
     attendance_streak_status: str | None = Field(default=None, min_length=1, max_length=50)
     attendance_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     attendance_streak_reset_statuses: list[str] | None = None

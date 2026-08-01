@@ -1,11 +1,12 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy import delete as sa_delete, false, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.excused_periods import automatic_attendance, periods_on_date
 from app.time import utcnow
 from app.media import signed_media_url
 from app.models import (
@@ -130,18 +131,19 @@ async def create_session(
         )
     )).scalars().all() if students else []
     excused_by_student = {row.student_id: row for row in excused_rows}
+    period_by_student = await periods_on_date(
+        db, context.tahfiz_id, [student.id for student in students], body.session_date
+    )
 
     for s in students:
-        notes = None
-        if s.registration_date and s.registration_date > body.session_date:
-            status = AttendanceStatus.not_applicable
-        else:
-            excused_weekday = excused_by_student.get(s.id)
-            if excused_weekday:
-                status = AttendanceStatus.not_applicable
-                notes = excused_weekday.note
-            else:
-                status = body.default_status
+        status, notes = automatic_attendance(
+            context.tahfiz,
+            s,
+            body.session_date,
+            body.default_status,
+            period=period_by_student.get(s.id),
+            weekday=excused_by_student.get(s.id),
+        )
         db.add(Attendance(
             session_id=session.id,
             student_id=s.id,
@@ -202,7 +204,16 @@ async def get_session_attendance(
         .options(
             selectinload(Sheikh.students)
         )
-        .where(Sheikh.tahfiz_id == session.tahfiz_id)
+        .where(
+            Sheikh.tahfiz_id == session.tahfiz_id,
+            *(
+                [Sheikh.id == context.sheikh_id]
+                if context.restricts_sheikh_students and context.sheikh_id is not None
+                else [false()]
+                if context.restricts_sheikh_students
+                else []
+            ),
+        )
     )
     circle_sheikhs = result.scalars().all()
 
@@ -236,6 +247,9 @@ async def get_session_attendance(
         )
     )).scalars().all() if student_ids else []
     excused_by_student = {row.student_id: row for row in excused_rows}
+    period_by_student = await periods_on_date(
+        db, context.tahfiz_id, student_ids, session.date
+    )
 
     for sheikh in circle_sheikhs:
         students_list = []
@@ -252,15 +266,14 @@ async def get_session_attendance(
                 status = att.status
                 notes = att.notes if att.notes is not None else (excused_note if status == AttendanceStatus.not_applicable.value else None)
             else:
-                if s.registration_date and s.registration_date > session.date:
-                    status = "لا ينطبق"
-                    notes = None
-                elif excused_weekday:
-                    status = "لا ينطبق"
-                    notes = excused_note
-                else:
-                    status = "غياب"
-                    notes = None
+                status, notes = automatic_attendance(
+                    context.tahfiz,
+                    s,
+                    session.date,
+                    AttendanceStatus.absent.value,
+                    period=period_by_student.get(s.id),
+                    weekday=excused_weekday,
+                )
             students_list.append({
                 "id": s.id,
                 "name": s.name,
@@ -365,18 +378,21 @@ async def confirm_session(
         )
     )).scalars().all() if missing else []
     excused_by_student = {row.student_id: row for row in excused_rows}
+    period_by_student = await periods_on_date(
+        db, context.tahfiz_id, missing, session.date
+    )
     for sid in missing:
         s = student_map.get(sid)
-        notes = None
-        if s and s.registration_date and s.registration_date > session.date:
-            status = AttendanceStatus.not_applicable
-        else:
-            excused_weekday = excused_by_student.get(sid)
-            if s and excused_weekday:
-                status = AttendanceStatus.not_applicable
-                notes = excused_weekday.note
-            else:
-                status = AttendanceStatus.absent
+        if not s:
+            continue
+        status, notes = automatic_attendance(
+            context.tahfiz,
+            s,
+            session.date,
+            AttendanceStatus.absent.value,
+            period=period_by_student.get(sid),
+            weekday=excused_by_student.get(sid),
+        )
         db.add(Attendance(
             session_id=session_id,
             student_id=sid,

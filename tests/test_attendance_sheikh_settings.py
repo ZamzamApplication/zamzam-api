@@ -24,6 +24,14 @@ def test_attendance_sheikh_selector_can_be_disabled_in_settings_request():
     assert request.attendance_sheikh_selection_enabled is False
 
 
+def test_sheikh_student_access_defaults_to_restricted():
+    column = Tahfiz.__table__.c.restrict_sheikh_student_access
+    request = UpdateTahfizSettingsRequest(restrict_sheikh_student_access=False)
+
+    assert column.default.arg is True
+    assert request.restrict_sheikh_student_access is False
+
+
 def test_attendance_status_renames_are_accepted_in_settings_request():
     request = UpdateTahfizSettingsRequest(
         attendance_statuses=["حاضر", "متغيب"],

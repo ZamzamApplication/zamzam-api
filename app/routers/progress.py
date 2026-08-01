@@ -21,7 +21,7 @@ from app.models import (
     StudentGoalStatus,
     User,
 )
-from app.routers.auth import TenantContext, get_tenant_context
+from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.schemas import (
     CreateStudentGoalRequest,
     QuranProgressBatchRequest,
@@ -117,9 +117,11 @@ async def session_progress(
         raise HTTPException(status_code=404, detail="Session not found")
     entries = (await db.execute(
         select(QuranProgressEntry)
+        .join(Student, Student.id == QuranProgressEntry.student_id)
         .where(
             QuranProgressEntry.session_id == session_id,
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
         )
         .order_by(QuranProgressEntry.student_id, QuranProgressEntry.category)
     )).scalars().all()
@@ -132,8 +134,10 @@ async def session_progress(
             ).label("row_number"),
         )
         .join(Session, Session.id == QuranProgressEntry.session_id)
+        .join(Student, Student.id == QuranProgressEntry.student_id)
         .where(
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
             or_(
                 Session.date < session.date,
                 and_(Session.date == session.date, Session.id < session.id),
@@ -175,13 +179,15 @@ async def save_session_progress(
     student_ids = {item.student_id for item in body.updates}
     valid_students = set((await db.execute(select(Student.id).where(
         Student.id.in_(student_ids),
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))).scalars().all())
     if valid_students != student_ids:
         raise HTTPException(status_code=404, detail="One or more students were not found")
 
     sheikh_ids = {item.sheikh_id for item in body.updates if item.sheikh_id is not None}
     if sheikh_ids:
+        if context.restricts_sheikh_students and sheikh_ids != {context.sheikh_id}:
+            raise HTTPException(status_code=404, detail="One or more sheikhs were not found")
         valid_sheikhs = set((await db.execute(select(Sheikh.id).where(
             Sheikh.id.in_(sheikh_ids),
             Sheikh.tahfiz_id == context.tahfiz_id,
@@ -280,7 +286,7 @@ async def student_progress(
         return {"enabled": False, "entries": [], "goals": [], "average_quality": 0, "trend": [], "revisions": []}
     student = await db.scalar(select(Student.id).where(
         Student.id == student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -359,7 +365,7 @@ async def create_student_goal(
     ensure_enabled(context)
     student = await db.scalar(select(Student.id).where(
         Student.id == student_id,
-        Student.tahfiz_id == context.tahfiz_id,
+        student_scope_clause(context),
     ))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -392,6 +398,11 @@ async def update_student_goal(
     context: TenantContext = Depends(get_tenant_context),
 ):
     ensure_enabled(context)
+    if not await db.scalar(select(Student.id).where(
+        Student.id == student_id,
+        student_scope_clause(context),
+    )):
+        raise HTTPException(status_code=404, detail="Goal not found")
     goal = await db.scalar(select(StudentGoal).where(
         StudentGoal.id == goal_id,
         StudentGoal.student_id == student_id,
@@ -433,6 +444,7 @@ async def progress_report(
         .join(Student, Student.id == QuranProgressEntry.student_id)
         .join(Session, Session.id == QuranProgressEntry.session_id)
         .where(QuranProgressEntry.tahfiz_id == context.tahfiz_id)
+        .where(student_scope_clause(context))
         .group_by(QuranProgressEntry.student_id, Student.name)
         .order_by(Student.name)
     )
@@ -440,6 +452,8 @@ async def progress_report(
         select(QuranProgressEntry.category, func.count(QuranProgressEntry.id))
         .join(Session, Session.id == QuranProgressEntry.session_id)
         .where(QuranProgressEntry.tahfiz_id == context.tahfiz_id)
+        .join(Student, Student.id == QuranProgressEntry.student_id)
+        .where(student_scope_clause(context))
         .group_by(QuranProgressEntry.category)
     )
     if date_from:
@@ -452,6 +466,8 @@ async def progress_report(
         select(QuranProgressEntry, Session.date)
         .join(Session, Session.id == QuranProgressEntry.session_id)
         .where(QuranProgressEntry.tahfiz_id == context.tahfiz_id)
+        .join(Student, Student.id == QuranProgressEntry.student_id)
+        .where(student_scope_clause(context))
         .order_by(Session.date.desc(), QuranProgressEntry.updated_at.desc())
     )
     if date_from:

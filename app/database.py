@@ -187,6 +187,28 @@ async def migrate():
         if excused_weekday_columns and "note" not in excused_weekday_columns:
             await conn.execute(text("ALTER TABLE excused_weekdays ADD COLUMN note TEXT"))
 
+        # — Create temporary student excused-period table —
+        result = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='student_excused_periods'"
+        ))
+        if not result.scalar_one_or_none():
+            await conn.execute(text("""
+                CREATE TABLE student_excused_periods (
+                    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL REFERENCES students(id),
+                    tahfiz_id INTEGER NOT NULL REFERENCES tahfiz(id),
+                    start_date DATE NOT NULL,
+                    end_date DATE NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_by_id INTEGER NOT NULL REFERENCES users(id),
+                    cancelled_at DATETIME,
+                    cancelled_by_id INTEGER REFERENCES users(id),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    CONSTRAINT ck_student_excused_period_dates CHECK (start_date <= end_date)
+                )
+            """))
+
         # — Make attendance.student_id nullable —
         result = await conn.execute(text("PRAGMA table_info(attendance)"))
         att_columns = {row[1]: row for row in result.fetchall()}
@@ -449,6 +471,10 @@ async def migrate():
             await conn.execute(text(
                 "ALTER TABLE tahfiz ADD COLUMN attendance_sheikh_selection_enabled BOOLEAN NOT NULL DEFAULT 1"
             ))
+        if "restrict_sheikh_student_access" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN restrict_sheikh_student_access BOOLEAN NOT NULL DEFAULT 1"
+            ))
         if "attendance_streak_status" not in tahfiz_columns:
             await conn.execute(text(
                 "ALTER TABLE tahfiz ADD COLUMN attendance_streak_status VARCHAR(50) NOT NULL DEFAULT 'غياب بعذر'"
@@ -561,6 +587,10 @@ async def migrate():
         await conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_excused_weekday_student_day "
             "ON excused_weekdays(student_id, weekday)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_student_excused_periods_tenant_student_dates "
+            "ON student_excused_periods(tahfiz_id, student_id, start_date, end_date)"
         ))
 
 

@@ -311,6 +311,7 @@ class Tahfiz(Base):
     )
     attendance_streak_alert_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     attendance_sheikh_selection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    restrict_sheikh_student_access: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     attendance_streak_status: Mapped[str] = mapped_column(
         String(50),
         default=DEFAULT_ATTENDANCE_STREAK_STATUS,
@@ -435,6 +436,28 @@ class Student(Base):
     parent_phones: Mapped[list["ParentPhone"]] = relationship("ParentPhone", back_populates="student", cascade="all, delete-orphan")
     warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
     excused_weekdays: Mapped[list["ExcusedWeekday"]] = relationship("ExcusedWeekday", back_populates="student", cascade="all, delete-orphan")
+    excused_periods: Mapped[list["StudentExcusedPeriod"]] = relationship("StudentExcusedPeriod", back_populates="student", cascade="all, delete-orphan")
+
+
+class StudentExcusedPeriod(Base):
+    __tablename__ = "student_excused_periods"
+    __table_args__ = (
+        Index("ix_student_excused_periods_tenant_student_dates", "tahfiz_id", "student_id", "start_date", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    student: Mapped["Student"] = relationship("Student", back_populates="excused_periods")
 
 
 class StudentWarning(Base):
