@@ -65,6 +65,7 @@ from app.schemas import (
     CreateWarningRequest,
     DeleteSheikhRequest,
     MoveStudentRequest,
+    MoveStudentResponse,
     ReorderStudentsRequest,
     SendStudentWarningRequest,
     SendWarningsRequest,
@@ -951,29 +952,78 @@ async def delete_student(
     return {"message": "تم حذف الطالب"}
 
 
-@router.post("/students/{student_id}/move-sheikh")
+@router.post("/students/{student_id}/move-sheikh", response_model=MoveStudentResponse)
 async def move_student_sheikh(
     student_id: int,
     body: MoveStudentRequest,
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    result = await db.execute(select(Student).where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id))
+    result = await db.execute(
+        select(Student)
+        .where(
+            Student.id == student_id,
+            Student.tahfiz_id == context.tahfiz_id,
+        )
+        .with_for_update()
+    )
     student = result.scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    if student.sheikh_id == body.sheikh_id:
-        raise HTTPException(status_code=400, detail="الطالب بالفعل تحت هذا الشيخ")
+    if student.sheikh_id != body.expected_current_sheikh_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "student_sheikh_changed",
+                "message": "تغير الشيخ الحالي للطالب. حدّث البيانات ثم أعد المحاولة.",
+                "current_sheikh_id": student.sheikh_id,
+            },
+        )
 
-    result = await db.execute(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
-    if not result.scalar_one_or_none():
+    if student.sheikh_id == body.sheikh_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "student_already_assigned",
+                "message": "الطالب بالفعل تحت هذا الشيخ",
+            },
+        )
+
+    result = await db.execute(
+        select(Sheikh)
+        .where(
+            Sheikh.id == body.sheikh_id,
+            Sheikh.tahfiz_id == context.tahfiz_id,
+        )
+        .with_for_update()
+    )
+    destination_sheikh = result.scalar_one_or_none()
+    if not destination_sheikh:
         raise HTTPException(status_code=404, detail="Sheikh not found")
 
+    source_sheikh_id = student.sheikh_id
     student.sheikh_id = body.sheikh_id
     student.sort_order = 0
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.sheikh_changed",
+        details=(
+            f"student={student.id}; from_sheikh={source_sheikh_id}; "
+            f"to_sheikh={destination_sheikh.id}"
+        ),
+    ))
     await db.commit()
-    return {"message": f"تم نقل الطالب إلى الشيخ {body.sheikh_id}"}
+    return {
+        "message": f"تم نقل الطالب إلى الشيخ {destination_sheikh.name}",
+        "student_id": student.id,
+        "from_sheikh_id": source_sheikh_id,
+        "destination_sheikh": {
+            "id": destination_sheikh.id,
+            "name": destination_sheikh.name,
+        },
+    }
 
 
 @router.post("/students/{student_id}/warnings")

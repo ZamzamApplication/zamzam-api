@@ -282,6 +282,19 @@ class CreateWarningRequest(BaseModel):
 
 class MoveStudentRequest(BaseModel):
     sheikh_id: int
+    expected_current_sheikh_id: int
+
+
+class MoveStudentDestinationOut(BaseModel):
+    id: int
+    name: str
+
+
+class MoveStudentResponse(BaseModel):
+    message: str
+    student_id: int
+    from_sheikh_id: int | None
+    destination_sheikh: MoveStudentDestinationOut
 
 
 class DeleteSheikhStudentResolution(BaseModel):
