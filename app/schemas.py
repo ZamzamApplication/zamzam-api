@@ -284,6 +284,32 @@ class MoveStudentRequest(BaseModel):
     sheikh_id: int
 
 
+class DeleteSheikhStudentResolution(BaseModel):
+    student_id: int
+    action: Literal["reassign", "delete"]
+    sheikh_id: int | None = None
+
+    @model_validator(mode="after")
+    def validate_target(self):
+        if self.action == "reassign" and self.sheikh_id is None:
+            raise ValueError("A destination Sheikh is required for reassignment")
+        if self.action == "delete" and self.sheikh_id is not None:
+            raise ValueError("Deleted students cannot have a destination Sheikh")
+        return self
+
+
+class DeleteSheikhRequest(BaseModel):
+    student_resolutions: list[DeleteSheikhStudentResolution] = Field(default_factory=list, max_length=1000)
+
+    @field_validator("student_resolutions")
+    @classmethod
+    def validate_unique_students(cls, values):
+        ids = [item.student_id for item in values]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Each student must have exactly one resolution")
+        return values
+
+
 class ReorderStudentsRequest(BaseModel):
     student_ids: list[int] = Field(max_length=1000)
 

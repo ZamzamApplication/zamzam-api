@@ -33,6 +33,7 @@ from app.models import (
     ParentPhone,
     ParentType,
     QuranProgressEntry,
+    QuranProgressRevision,
     SavedFilter,
     Session,
     Sheikh,
@@ -42,6 +43,7 @@ from app.models import (
     StudentStatus,
     StudentWarning,
     Tahfiz,
+    TahfizInvitation,
     User,
     UserRole,
     UserTahfizMembership,
@@ -61,6 +63,7 @@ from app.schemas import (
     CreateStudentRequest,
     CreateUserRequest,
     CreateWarningRequest,
+    DeleteSheikhRequest,
     MoveStudentRequest,
     ReorderStudentsRequest,
     SendStudentWarningRequest,
@@ -328,6 +331,226 @@ async def update_sheikh(
     return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
 
 
+async def sheikh_deletion_students(
+    db: AsyncSession,
+    tahfiz_id: int,
+    sheikh_id: int,
+) -> list[Student]:
+    return list((await db.execute(
+        select(Student)
+        .options(
+            selectinload(Student.attendance_records),
+            selectinload(Student.parent_phones),
+            selectinload(Student.warnings),
+            selectinload(Student.excused_weekdays),
+            selectinload(Student.excused_periods),
+        )
+        .where(
+            Student.tahfiz_id == tahfiz_id,
+            Student.sheikh_id == sheikh_id,
+        )
+        .order_by(Student.name, Student.id)
+    )).scalars().all())
+
+
+async def delete_student_entity(
+    db: AsyncSession,
+    student: Student,
+    tahfiz_id: int,
+    *,
+    delete_attendance: bool,
+) -> None:
+    await db.execute(sa_delete(QuranProgressRevision).where(
+        QuranProgressRevision.student_id == student.id,
+        QuranProgressRevision.tahfiz_id == tahfiz_id,
+    ))
+    await db.execute(sa_delete(QuranProgressEntry).where(
+        QuranProgressEntry.student_id == student.id,
+        QuranProgressEntry.tahfiz_id == tahfiz_id,
+    ))
+    await db.execute(sa_delete(StudentGoal).where(
+        StudentGoal.student_id == student.id,
+        StudentGoal.tahfiz_id == tahfiz_id,
+    ))
+    if not delete_attendance:
+        for attendance in student.attendance_records:
+            attendance.student_id = None
+    await db.delete(student)
+
+
+def validate_sheikh_deletion_plan(
+    assigned_ids: set[int],
+    body: DeleteSheikhRequest,
+    deleted_sheikh_id: int,
+    valid_target_ids: set[int],
+) -> None:
+    submitted_ids = {item.student_id for item in body.student_resolutions}
+    if assigned_ids != submitted_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "sheikh_students_changed",
+                "message": "تغيرت قائمة طلاب الشيخ. راجع الخيارات ثم أعد المحاولة.",
+                "assigned_student_ids": sorted(assigned_ids),
+            },
+        )
+    requested_target_ids = {
+        item.sheikh_id
+        for item in body.student_resolutions
+        if item.action == "reassign" and item.sheikh_id is not None
+    }
+    if deleted_sheikh_id in requested_target_ids:
+        raise HTTPException(status_code=400, detail={"code": "cannot_reassign_to_deleted_sheikh"})
+    if valid_target_ids != requested_target_ids:
+        raise HTTPException(status_code=404, detail={"code": "destination_sheikh_not_found"})
+
+
+async def finalize_sheikh_deletion(
+    db: AsyncSession,
+    context: TenantContext,
+    sheikh: Sheikh,
+    students: list[Student],
+    body: DeleteSheikhRequest,
+) -> dict:
+    assigned_ids = {student.id for student in students}
+    target_ids = {
+        item.sheikh_id
+        for item in body.student_resolutions
+        if item.action == "reassign" and item.sheikh_id is not None
+    }
+    valid_targets = set((await db.execute(
+        select(Sheikh.id).where(
+            Sheikh.tahfiz_id == context.tahfiz_id,
+            Sheikh.id.in_(target_ids),
+        )
+    )).scalars().all()) if target_ids else set()
+    validate_sheikh_deletion_plan(assigned_ids, body, sheikh.id, valid_targets)
+
+    by_student_id = {student.id: student for student in students}
+    reassigned = 0
+    deleted = 0
+    for resolution in body.student_resolutions:
+        student = by_student_id[resolution.student_id]
+        if resolution.action == "reassign":
+            student.sheikh_id = resolution.sheikh_id
+            student.sort_order = 0
+            reassigned += 1
+            db.add(AuditLog(
+                actor_user_id=context.user.id,
+                tahfiz_id=context.tahfiz_id,
+                action="student.reassigned_before_sheikh_delete",
+                details=f"student={student.id}; from_sheikh={sheikh.id}; to_sheikh={resolution.sheikh_id}",
+            ))
+        else:
+            await delete_student_entity(
+                db, student, context.tahfiz_id, delete_attendance=True
+            )
+            deleted += 1
+            db.add(AuditLog(
+                actor_user_id=context.user.id,
+                tahfiz_id=context.tahfiz_id,
+                action="student.deleted_before_sheikh_delete",
+                details=f"student={student.id}; name={student.name}; sheikh={sheikh.id}; delete_attendance=True",
+            ))
+
+    await db.flush()
+    await db.execute(sa_update(Attendance).where(
+        Attendance.sheikh_id == sheikh.id,
+        Attendance.tahfiz_id == context.tahfiz_id,
+    ).values(sheikh_id=None))
+    await db.execute(sa_update(QuranProgressEntry).where(
+        QuranProgressEntry.sheikh_id == sheikh.id,
+        QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+    ).values(sheikh_id=None))
+    await db.execute(sa_update(User).where(
+        User.sheikh_id == sheikh.id,
+        User.tahfiz_id == context.tahfiz_id,
+    ).values(sheikh_id=None))
+    await db.execute(sa_update(UserTahfizMembership).where(
+        UserTahfizMembership.sheikh_id == sheikh.id,
+        UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+    ).values(sheikh_id=None))
+    now = utcnow()
+    await db.execute(sa_update(TahfizInvitation).where(
+        TahfizInvitation.sheikh_id == sheikh.id,
+        TahfizInvitation.tahfiz_id == context.tahfiz_id,
+        TahfizInvitation.used_at.is_(None),
+        TahfizInvitation.revoked_at.is_(None),
+    ).values(sheikh_id=None, revoked_at=now))
+    await db.execute(sa_update(TahfizInvitation).where(
+        TahfizInvitation.sheikh_id == sheikh.id,
+        TahfizInvitation.tahfiz_id == context.tahfiz_id,
+    ).values(sheikh_id=None))
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="sheikh.deleted",
+        details=f"sheikh={sheikh.id}; name={sheikh.name}; reassigned_students={reassigned}; deleted_students={deleted}",
+    ))
+    await db.delete(sheikh)
+    await db.commit()
+    return {
+        "message": "تم حذف الشيخ ومعالجة جميع الطلاب",
+        "reassigned_students": reassigned,
+        "deleted_students": deleted,
+    }
+
+
+@router.get("/sheikhs/{sheikh_id}/deletion-preview")
+async def sheikh_deletion_preview(
+    sheikh_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    sheikh = await db.scalar(select(Sheikh).where(
+        Sheikh.id == sheikh_id,
+        Sheikh.tahfiz_id == context.tahfiz_id,
+    ))
+    if not sheikh:
+        raise HTTPException(status_code=404, detail="Sheikh not found")
+    students = await sheikh_deletion_students(db, context.tahfiz_id, sheikh_id)
+    destinations = (await db.execute(select(Sheikh).where(
+        Sheikh.tahfiz_id == context.tahfiz_id,
+        Sheikh.id != sheikh_id,
+    ).order_by(Sheikh.name, Sheikh.id))).scalars().all()
+    linked_users = (await db.execute(
+        select(User.username)
+        .join(UserTahfizMembership, UserTahfizMembership.user_id == User.id)
+        .where(
+            UserTahfizMembership.tahfiz_id == context.tahfiz_id,
+            UserTahfizMembership.sheikh_id == sheikh_id,
+            UserTahfizMembership.is_active == True,
+        )
+        .order_by(User.username)
+    )).scalars().all()
+    return {
+        "sheikh": {"id": sheikh.id, "name": sheikh.name},
+        "students": [
+            {"id": student.id, "name": student.name, "student_id": student.student_id, "phone": student.phone, "status": student.status.value}
+            for student in students
+        ],
+        "destination_sheikhs": [{"id": target.id, "name": target.name} for target in destinations],
+        "linked_usernames": list(linked_users),
+    }
+
+
+@router.post("/sheikhs/{sheikh_id}/delete")
+async def delete_sheikh_with_student_resolutions(
+    sheikh_id: int,
+    body: DeleteSheikhRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    sheikh = await db.scalar(select(Sheikh).where(
+        Sheikh.id == sheikh_id,
+        Sheikh.tahfiz_id == context.tahfiz_id,
+    ))
+    if not sheikh:
+        raise HTTPException(status_code=404, detail="Sheikh not found")
+    students = await sheikh_deletion_students(db, context.tahfiz_id, sheikh_id)
+    return await finalize_sheikh_deletion(db, context, sheikh, students, body)
+
+
 @router.delete("/sheikhs/{sheikh_id}")
 async def delete_sheikh(
     sheikh_id: int,
@@ -338,19 +561,19 @@ async def delete_sheikh(
     sheikh = result.scalar_one_or_none()
     if not sheikh:
         raise HTTPException(status_code=404, detail="Sheikh not found")
-    await db.execute(sa_update(Student).where(Student.sheikh_id == sheikh_id, Student.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
-    await db.execute(sa_update(Attendance).where(Attendance.sheikh_id == sheikh_id, Attendance.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
-    await db.execute(sa_update(QuranProgressEntry).where(QuranProgressEntry.sheikh_id == sheikh_id, QuranProgressEntry.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
-    await db.execute(sa_update(User).where(User.sheikh_id == sheikh_id, User.tahfiz_id == context.tahfiz_id).values(sheikh_id=None))
-    db.add(AuditLog(
-        actor_user_id=context.user.id,
-        tahfiz_id=context.tahfiz_id,
-        action="sheikh.deleted",
-        details=f"sheikh={sheikh.id}; name={sheikh.name}",
-    ))
-    await db.delete(sheikh)
-    await db.commit()
-    return {"message": "تم حذف الشيخ"}
+    students = await sheikh_deletion_students(db, context.tahfiz_id, sheikh_id)
+    if students:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "sheikh_has_students",
+                "message": "يجب اختيار نقل أو حذف كل طالب قبل حذف الشيخ.",
+                "assigned_student_ids": [student.id for student in students],
+            },
+        )
+    return await finalize_sheikh_deletion(
+        db, context, sheikh, students, DeleteSheikhRequest(student_resolutions=[])
+    )
 
 
 # ─── Sheikh Students ─────────────────────────────────────────────────────────
@@ -714,20 +937,9 @@ async def delete_student(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    await db.execute(sa_delete(QuranProgressEntry).where(
-        QuranProgressEntry.student_id == student_id,
-        QuranProgressEntry.tahfiz_id == context.tahfiz_id,
-    ))
-    await db.execute(sa_delete(StudentGoal).where(
-        StudentGoal.student_id == student_id,
-        StudentGoal.tahfiz_id == context.tahfiz_id,
-    ))
-    if delete_sessions:
-        await db.delete(student)
-    else:
-        for att in student.attendance_records:
-            att.student_id = None
-        await db.delete(student)
+    await delete_student_entity(
+        db, student, context.tahfiz_id, delete_attendance=delete_sessions
+    )
 
     db.add(AuditLog(
         actor_user_id=context.user.id,
