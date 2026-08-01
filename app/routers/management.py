@@ -41,6 +41,7 @@ from app.models import (
     StudentExcusedPeriod,
     StudentGoal,
     StudentStatus,
+    StudentSubscription,
     StudentWarning,
     Tahfiz,
     TahfizInvitation,
@@ -56,6 +57,7 @@ from app.models import (
     excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin, student_scope_clause
+from app.routers.subscriptions import ensure_current_subscription_records, serialize_record as serialize_subscription_record
 from app.schemas import (
     CreateParentPhone,
     CreateExcusedPeriodRequest,
@@ -361,6 +363,10 @@ async def delete_student_entity(
     *,
     delete_attendance: bool,
 ) -> None:
+    await db.execute(sa_update(StudentSubscription).where(
+        StudentSubscription.student_id == student.id,
+        StudentSubscription.tahfiz_id == tahfiz_id,
+    ).values(student_id=None))
     await db.execute(sa_delete(QuranProgressRevision).where(
         QuranProgressRevision.student_id == student.id,
         QuranProgressRevision.tahfiz_id == tahfiz_id,
@@ -858,6 +864,9 @@ async def create_student(
         )
         db.add(parent_phone)
 
+    if context.tahfiz.subscriptions_enabled and student.status == StudentStatus.enrolled:
+        await ensure_current_subscription_records(db, context)
+
     await db.commit()
     await db.refresh(student)
     return {"id": student.id, "name": student.name}
@@ -914,6 +923,9 @@ async def update_student(
                 name=pp.name,
             )
             db.add(parent_phone)
+
+    if context.tahfiz.subscriptions_enabled and student.status == StudentStatus.enrolled:
+        await ensure_current_subscription_records(db, context)
 
     await db.commit()
     return {"id": student.id, "name": student.name}
@@ -1518,6 +1530,9 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
         "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
+        "subscriptions_enabled": tahfiz.subscriptions_enabled,
+        "subscription_default_fee_minor": tahfiz.subscription_default_fee_minor,
+        "subscription_currency": tahfiz.subscription_currency,
     }
 
 
@@ -1558,6 +1573,14 @@ async def update_tahfiz_settings(
         if not 1 <= body.month_start_day <= 28:
             raise HTTPException(status_code=400, detail="Invalid month start day")
         if tahfiz.month_start_day != body.month_start_day:
+            subscription_count = await db.scalar(select(func.count()).select_from(StudentSubscription).where(
+                StudentSubscription.tahfiz_id == context.tahfiz_id,
+            ))
+            if subscription_count:
+                raise HTTPException(status_code=409, detail={
+                    "code": "subscription_month_start_locked",
+                    "message": "Month start day cannot change after subscription records exist",
+                })
             tahfiz.month_start_day = body.month_start_day
             changed_fields.append("month_start_day")
     if body.attendance_statuses is not None:
@@ -1734,6 +1757,38 @@ async def update_tahfiz_settings(
     if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
         tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
         changed_fields.append("progress_tracking_enabled")
+    next_subscription_fee = (
+        body.subscription_default_fee_minor
+        if body.subscription_default_fee_minor is not None
+        else tahfiz.subscription_default_fee_minor
+    )
+    if body.subscriptions_enabled is True and not tahfiz.subscriptions_enabled and next_subscription_fee <= 0:
+        raise HTTPException(status_code=400, detail={
+            "code": "subscription_default_fee_required",
+            "message": "A default monthly fee is required before enabling subscriptions",
+        })
+    if body.subscription_currency is not None:
+        next_subscription_currency = body.subscription_currency.upper()
+        if next_subscription_currency != tahfiz.subscription_currency:
+            subscription_count = await db.scalar(select(func.count()).select_from(StudentSubscription).where(
+                StudentSubscription.tahfiz_id == context.tahfiz_id,
+            ))
+            if subscription_count:
+                raise HTTPException(status_code=409, detail={
+                    "code": "subscription_currency_locked",
+                    "message": "Currency cannot change after subscription records exist",
+                })
+            tahfiz.subscription_currency = next_subscription_currency
+            changed_fields.append("subscription_currency")
+    if (
+        body.subscription_default_fee_minor is not None
+        and tahfiz.subscription_default_fee_minor != body.subscription_default_fee_minor
+    ):
+        tahfiz.subscription_default_fee_minor = body.subscription_default_fee_minor
+        changed_fields.append("subscription_default_fee_minor")
+    if body.subscriptions_enabled is not None and tahfiz.subscriptions_enabled != body.subscriptions_enabled:
+        tahfiz.subscriptions_enabled = body.subscriptions_enabled
+        changed_fields.append("subscriptions_enabled")
     if body.whatsend_api_key is not None:
         tahfiz.whatsend_api_key_encrypted = encrypt_secret(body.whatsend_api_key.strip()) if body.whatsend_api_key.strip() else None
         changed_fields.append("whatsend_api_key")
@@ -2037,6 +2092,9 @@ async def export_tahfiz(
     warnings = (await db.execute(select(StudentWarning).where(StudentWarning.student_id.in_(student_ids)))).scalars().all() if student_ids else []
     excused = (await db.execute(select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids)))).scalars().all() if student_ids else []
     excused_periods = (await db.execute(select(StudentExcusedPeriod).where(StudentExcusedPeriod.student_id.in_(student_ids)))).scalars().all() if student_ids else []
+    subscriptions = (await db.execute(select(StudentSubscription).where(
+        StudentSubscription.tahfiz_id == tahfiz_id,
+    ).order_by(StudentSubscription.period_start, StudentSubscription.id))).scalars().all()
 
     return {
         "format": "zamzam-tahfiz-export-v1",
@@ -2058,6 +2116,7 @@ async def export_tahfiz(
             "birthday": row.birthday.isoformat() if row.birthday else None, "profile_pic": row.profile_pic,
             "status": row.status.value, "registration_date": row.registration_date.isoformat() if row.registration_date else None,
             "sheikh_id": row.sheikh_id, "sort_order": row.sort_order,
+            "subscription_fee_override_minor": row.subscription_fee_override_minor,
         } for row in students],
         "sessions": [{"id": row.id, "date": row.date.isoformat(), "is_confirmed": row.is_confirmed} for row in sessions],
         "attendance": [{
@@ -2076,4 +2135,5 @@ async def export_tahfiz(
         } for row in warnings],
         "excused_weekdays": [{"id": row.id, "student_id": row.student_id, "weekday": row.weekday, "note": row.note} for row in excused],
         "excused_periods": [serialize_excused_period(row) for row in excused_periods],
+        "subscriptions": [serialize_subscription_record(row) for row in subscriptions],
     }

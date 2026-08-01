@@ -83,6 +83,9 @@ class TahfizOut(BaseModel):
     })
     excel_export_templates: dict = Field(default_factory=dict)
     whatsend_enabled: bool = True
+    subscriptions_enabled: bool = False
+    subscription_default_fee_minor: int = 0
+    subscription_currency: str = "EGP"
 
     class Config:
         from_attributes = True
@@ -285,6 +288,50 @@ class MoveStudentRequest(BaseModel):
     expected_current_sheikh_id: int
 
 
+class SubscriptionSettingsRequest(BaseModel):
+    enabled: bool | None = None
+    default_monthly_fee_minor: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+
+
+class StudentSubscriptionOverrideRequest(BaseModel):
+    monthly_fee_minor: int | None = Field(default=None, ge=0, le=1_000_000_000)
+
+
+class SubscriptionAmountRequest(BaseModel):
+    fee_minor: int = Field(ge=0, le=1_000_000_000)
+    update_future: bool = False
+    future_monthly_fee_minor: int | None = Field(default=None, ge=0, le=1_000_000_000)
+
+    @model_validator(mode="after")
+    def validate_future_amount(self):
+        if not self.update_future and self.future_monthly_fee_minor is not None:
+            raise ValueError("update_future is required when setting a future monthly fee")
+        return self
+
+
+class SubscriptionPaymentRequest(BaseModel):
+    payment_method: Literal["cash", "bank_transfer", "mobile_wallet", "other"]
+    payment_date: date
+    payment_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("payment_note")
+    @classmethod
+    def normalize_note(cls, value):
+        return value.strip() or None if value is not None else None
+
+
+class BulkSubscriptionPaymentRequest(SubscriptionPaymentRequest):
+    record_ids: list[int] = Field(min_length=1, max_length=500)
+
+    @field_validator("record_ids")
+    @classmethod
+    def unique_subscription_ids(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("Each subscription may only be paid once per request")
+        return values
+
+
 class MoveStudentDestinationOut(BaseModel):
     id: int
     name: str
@@ -456,6 +503,9 @@ class UpdateTahfizSettingsRequest(BaseModel):
     whatsend_api_key: str | None = Field(default=None, max_length=1000)
     whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
+    subscriptions_enabled: bool | None = None
+    subscription_default_fee_minor: int | None = Field(default=None, ge=0)
+    subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
 
 
 # Temporary request aliases for one cached-client compatibility release.

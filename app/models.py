@@ -2,7 +2,7 @@ import enum
 import json
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -326,6 +326,9 @@ class Tahfiz(Base):
     whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     whatsend_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     progress_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    subscriptions_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    subscription_default_fee_minor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    subscription_currency: Mapped[str] = mapped_column(String(3), default="EGP", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
@@ -430,6 +433,7 @@ class Student(Base):
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    subscription_fee_override_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sheikh: Mapped[Sheikh | None] = relationship("Sheikh", back_populates="students")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
@@ -437,6 +441,56 @@ class Student(Base):
     warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
     excused_weekdays: Mapped[list["ExcusedWeekday"]] = relationship("ExcusedWeekday", back_populates="student", cascade="all, delete-orphan")
     excused_periods: Mapped[list["StudentExcusedPeriod"]] = relationship("StudentExcusedPeriod", back_populates="student", cascade="all, delete-orphan")
+
+
+class StudentSubscription(Base):
+    __tablename__ = "student_subscriptions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tahfiz_id",
+            "student_snapshot_id",
+            "period_start",
+            name="uq_student_subscriptions_tenant_student_period",
+        ),
+        Index(
+            "ix_student_subscriptions_tenant_period_paid",
+            "tahfiz_id",
+            "period_start",
+            "is_paid",
+        ),
+        Index(
+            "ix_student_subscriptions_tenant_student",
+            "tahfiz_id",
+            "student_id",
+        ),
+        CheckConstraint("amount_due_minor >= 0", name="ck_student_subscriptions_amount_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    student_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("students.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    student_snapshot_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    student_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    student_custom_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    student_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sheikh_id_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sheikh_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_due_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    paid_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    payment_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    receipt_number: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class StudentExcusedPeriod(Base):
