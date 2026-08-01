@@ -508,6 +508,30 @@ class UpdateTahfizSettingsRequest(BaseModel):
     subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
 
 
+class AuditLogActorOut(BaseModel):
+    id: int
+    username: str
+
+
+class AuditLogItemOut(BaseModel):
+    id: int
+    actor_user_id: int
+    actor_username: str
+    action: str
+    details: str | None
+    created_at: datetime
+
+
+class AuditLogPageOut(BaseModel):
+    items: list[AuditLogItemOut]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    actions: list[str]
+    actors: list[AuditLogActorOut]
+
+
 # Temporary request aliases for one cached-client compatibility release.
 CreateCircleRequest = UpdateTahfizRequest
 UpdateCircleRequest = UpdateTahfizSettingsRequest

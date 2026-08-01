@@ -686,6 +686,9 @@ class StudentGoal(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_tahfiz_created", "tahfiz_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     actor_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)

@@ -476,6 +476,12 @@ async def delete_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.is_confirmed:
+        raise HTTPException(status_code=409, detail={
+            "code": "confirmed_session_delete_forbidden",
+            "message": "Confirmed sessions must be reopened before permanent deletion",
+            "required_action": "reopen",
+        })
 
     await db.execute(sa_delete(QuranProgressEntry).where(
         QuranProgressEntry.session_id == session_id,
@@ -493,7 +499,10 @@ async def delete_session(
         actor_user_id=context.user.id,
         tahfiz_id=context.tahfiz_id,
         action="session.deleted",
-        details=f"session={session.id}; date={session.date.isoformat()}",
+        details=(
+            f"session={session.id}; date={session.date.isoformat()}; "
+            f"previous_status={session_status(session)}"
+        ),
     ))
     await db.delete(session)
     await db.commit()
