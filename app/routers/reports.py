@@ -414,6 +414,7 @@ async def attendance_grid(
             StudentSubscription.tahfiz_id == context.tahfiz_id,
             StudentSubscription.period_start == subscription_period,
             StudentSubscription.student_snapshot_id.in_(student_ids),
+            StudentSubscription.is_paid.is_(True),
         ))).all())
 
     max_warnings = context.tahfiz.max_warnings

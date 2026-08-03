@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect as sqlalchemy_inspect, text
 
 from app.models import DEFAULT_EXPENSE_CATEGORIES, Expense, expense_category_options
 from app.routers import finance, subscriptions
+from app.routers import reports
 from app.schemas import BulkSubscriptionAmountRequest, ExpenseRequest, UpdateTahfizSettingsRequest
 
 
@@ -96,6 +97,11 @@ class FinanceContractTests(unittest.TestCase):
         self.assertIn("StudentSubscription.amount_due_minor == body.from_fee_minor", source)
         self.assertIn("Student.subscription_fee_override_minor.is_(None)", source)
         self.assertIn("subscriptions.bulk_amount_corrected", source)
+
+    def test_attendance_excel_amounts_only_include_paid_subscriptions(self):
+        source = inspect.getsource(reports.attendance_grid)
+        self.assertIn("StudentSubscription.is_paid.is_(True)", source)
+        self.assertIn('"subscription_amount_minor": subscription_amounts.get(sid)', source)
 
     def test_expense_model_and_migration_keep_soft_delete_history(self):
         self.assertIn("ck_expenses_amount_positive", {constraint.name for constraint in Expense.__table__.constraints})
