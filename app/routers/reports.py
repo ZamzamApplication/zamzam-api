@@ -14,12 +14,15 @@ from app.models import (
     Sheikh,
     Student,
     StudentStatus,
+    StudentSubscription,
     StudentWarning,
+    UserRole,
     attendance_status_color_options,
     attendance_status_options,
     excel_export_template_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
+from app.routers.subscriptions import monthly_period
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -400,6 +403,19 @@ async def attendance_grid(
     )
     warning_counts = dict(warning_count_result.all())
 
+    subscription_amounts: dict[int, int] = {}
+    if context.effective_role in (UserRole.admin, UserRole.super_admin):
+        reference_date = date_from or (sessions[0].date if sessions else date.today())
+        subscription_period, _ = monthly_period(reference_date, context.tahfiz.month_start_day)
+        subscription_amounts = dict((await db.execute(select(
+            StudentSubscription.student_snapshot_id,
+            StudentSubscription.amount_due_minor,
+        ).where(
+            StudentSubscription.tahfiz_id == context.tahfiz_id,
+            StudentSubscription.period_start == subscription_period,
+            StudentSubscription.student_snapshot_id.in_(student_ids),
+        ))).all())
+
     max_warnings = context.tahfiz.max_warnings
 
     # Build lookup: (student_id, session_id) -> status
@@ -427,6 +443,7 @@ async def attendance_grid(
             "sheikh_name": student.sheikh.name if student.sheikh else None,
             "next_warning_number": next_warning_number,
             "remaining_warnings": max(max_warnings - next_warning_number, 0),
+            **({"subscription_amount_minor": subscription_amounts.get(sid)} if context.effective_role in (UserRole.admin, UserRole.super_admin) else {}),
             "records": records,
         })
 

@@ -7,9 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AuditLog, Sheikh, Student, StudentStatus, StudentSubscription, User
+from app.models import AuditLog, Expense, Sheikh, Student, StudentStatus, StudentSubscription, User
 from app.routers.auth import TenantContext, require_tenant_admin
 from app.schemas import (
+    BulkSubscriptionAmountRequest,
     BulkSubscriptionPaymentRequest,
     StudentSubscriptionOverrideRequest,
     SubscriptionAmountRequest,
@@ -237,7 +238,10 @@ async def update_settings(
         existing = await db.scalar(select(func.count()).select_from(StudentSubscription).where(
             StudentSubscription.tahfiz_id == context.tahfiz_id,
         ))
-        if existing:
+        expenses = await db.scalar(select(func.count()).select_from(Expense).where(
+            Expense.tahfiz_id == context.tahfiz_id,
+        ))
+        if existing or expenses:
             raise HTTPException(status_code=409, detail={
                 "code": "subscription_currency_locked",
                 "message": "Currency cannot change after subscription records exist",
@@ -406,6 +410,47 @@ async def bulk_mark_paid(
     ))
     await db.commit()
     return {"updated": len(rows)}
+
+
+@router.patch("/months/bulk-correct-amount")
+async def bulk_correct_amount(
+    body: BulkSubscriptionAmountRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    period_start, _ = validate_period(body.period, context)
+    matching_ids = list((await db.execute(
+        select(StudentSubscription.id)
+        .outerjoin(Student, Student.id == StudentSubscription.student_id)
+        .where(
+            StudentSubscription.tahfiz_id == context.tahfiz_id,
+            StudentSubscription.period_start == period_start,
+            StudentSubscription.is_paid.is_(False),
+            StudentSubscription.amount_due_minor == body.from_fee_minor,
+            or_(Student.id.is_(None), Student.subscription_fee_override_minor.is_(None)),
+        )
+        .order_by(StudentSubscription.id)
+    )).scalars().all())
+    result = await db.execute(update(StudentSubscription).where(
+        StudentSubscription.id.in_(matching_ids),
+        StudentSubscription.tahfiz_id == context.tahfiz_id,
+        StudentSubscription.period_start == period_start,
+        StudentSubscription.is_paid.is_(False),
+        StudentSubscription.amount_due_minor == body.from_fee_minor,
+    ).values(amount_due_minor=body.to_fee_minor, updated_at=utcnow())) if matching_ids else None
+    updated = result.rowcount if result is not None else 0
+    total_period = int(await db.scalar(select(func.count()).select_from(StudentSubscription).where(
+        StudentSubscription.tahfiz_id == context.tahfiz_id,
+        StudentSubscription.period_start == period_start,
+    )) or 0)
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="subscriptions.bulk_amount_corrected",
+        details=f"period={period_start}; from={body.from_fee_minor}; to={body.to_fee_minor}; updated={updated}",
+    ))
+    await db.commit()
+    return {"updated": updated, "skipped": total_period - updated}
 
 
 @router.patch("/months/{record_id}")

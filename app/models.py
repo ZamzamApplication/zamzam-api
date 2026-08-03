@@ -35,6 +35,15 @@ DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.excused.value: "amber",
     AttendanceStatus.not_applicable.value: "sky",
 }
+DEFAULT_EXPENSE_CATEGORIES = [
+    {"id": "rent", "label": "إيجار", "enabled": True},
+    {"id": "salaries", "label": "رواتب", "enabled": True},
+    {"id": "utilities", "label": "مرافق", "enabled": True},
+    {"id": "maintenance", "label": "صيانة", "enabled": True},
+    {"id": "supplies", "label": "مستلزمات", "enabled": True},
+    {"id": "transportation", "label": "انتقالات", "enabled": True},
+    {"id": "other", "label": "أخرى", "enabled": True},
+]
 DEFAULT_EXCEL_EXPORT_TEMPLATES = {
     "attendance": {
         "header_font_family": "Arial",
@@ -55,6 +64,7 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
             {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6},
             {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24},
             {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20},
+            {"id": "subscription_amount", "label": "مبلغ الاشتراك", "enabled": True, "custom": False, "width": 16},
             {"id": "attendance", "label": "الحضور", "enabled": True, "custom": False, "width": 18},
         ],
     },
@@ -150,6 +160,25 @@ def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
         template["columns"] = missing_columns + template["columns"]
         templates[key] = template
     return templates
+
+
+def expense_category_options(tahfiz: "Tahfiz") -> list[dict]:
+    try:
+        values = json.loads(tahfiz.expense_categories)
+    except (AttributeError, TypeError, ValueError):
+        values = []
+    if not isinstance(values, list):
+        values = []
+    normalized = [
+        {"id": value["id"].strip(), "label": value["label"].strip(), "enabled": value.get("enabled", True) is not False}
+        for value in values
+        if isinstance(value, dict)
+        and isinstance(value.get("id"), str)
+        and value["id"].strip()
+        and isinstance(value.get("label"), str)
+        and value["label"].strip()
+    ]
+    return normalized or json.loads(json.dumps(DEFAULT_EXPENSE_CATEGORIES, ensure_ascii=False))
 
 
 def excused_absence_reset_status_options(tahfiz: "Tahfiz") -> list[str]:
@@ -329,6 +358,11 @@ class Tahfiz(Base):
     subscriptions_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     subscription_default_fee_minor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     subscription_currency: Mapped[str] = mapped_column(String(3), default="EGP", nullable=False)
+    expense_categories: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_EXPENSE_CATEGORIES, ensure_ascii=False),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     sheikhs: Mapped[list["Sheikh"]] = relationship("Sheikh", back_populates="tahfiz", cascade="all, delete-orphan")
@@ -489,6 +523,32 @@ class StudentSubscription(Base):
     payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
     payment_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     receipt_number: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+    __table_args__ = (
+        Index("ix_expenses_tenant_date_deleted", "tahfiz_id", "expense_date", "deleted_at"),
+        Index("ix_expenses_tenant_method_date", "tahfiz_id", "payment_method", "expense_date"),
+        CheckConstraint("amount_minor > 0", name="ck_expenses_amount_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    category_label_snapshot: Mapped[str] = mapped_column(String(100), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    expense_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    deleted_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

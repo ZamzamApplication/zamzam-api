@@ -16,7 +16,7 @@ from app.database import async_session, init_db
 from app.backup_scheduler import backup_loop
 from app.media import validate_media_token
 from app.routers.auth import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
-from app.routers import audit_logs, auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback, subscriptions
+from app.routers import audit_logs, auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback, subscriptions, finance
 from app.seed import seed_data
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ app.include_router(attendance.router)
 app.include_router(reports.router)
 app.include_router(management.router)
 app.include_router(subscriptions.router)
+app.include_router(finance.router)
 app.include_router(audit_logs.router)
 app.include_router(saved_filters.router)
 app.include_router(platform.router)

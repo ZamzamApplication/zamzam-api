@@ -332,6 +332,40 @@ class BulkSubscriptionPaymentRequest(SubscriptionPaymentRequest):
         return values
 
 
+class BulkSubscriptionAmountRequest(BaseModel):
+    period: date
+    from_fee_minor: int = Field(gt=0, le=1_000_000_000)
+    to_fee_minor: int = Field(ge=0, le=1_000_000_000)
+
+    @model_validator(mode="after")
+    def amounts_must_differ(self):
+        if self.from_fee_minor == self.to_fee_minor:
+            raise ValueError("The old and new fee must differ")
+        return self
+
+
+class ExpenseRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    category_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    amount_minor: int = Field(gt=0, le=1_000_000_000)
+    expense_date: date
+    payment_method: Literal["cash", "bank_transfer", "mobile_wallet", "other"]
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_expense_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Expense name is required")
+        return normalized
+
+    @field_validator("note")
+    @classmethod
+    def normalize_expense_note(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
 class MoveStudentDestinationOut(BaseModel):
     id: int
     name: str
@@ -479,6 +513,17 @@ class ExcelExportTemplateSettings(BaseModel):
     ] = "weekday_day_month_year"
 
 
+class ExpenseCategorySetting(BaseModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=100)
+    enabled: bool = True
+
+    @field_validator("id", "label")
+    @classmethod
+    def normalize_category_text(cls, value: str) -> str:
+        return value.strip()
+
+
 class UpdateTahfizSettingsRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)
@@ -506,6 +551,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     subscriptions_enabled: bool | None = None
     subscription_default_fee_minor: int | None = Field(default=None, ge=0)
     subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    expense_categories: list[ExpenseCategorySetting] | None = Field(default=None, min_length=1, max_length=30)
 
 
 class AuditLogActorOut(BaseModel):

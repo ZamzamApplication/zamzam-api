@@ -29,6 +29,7 @@ from app.models import (
     Attendance,
     AuditLog,
     DeviceSession,
+    Expense,
     ExcusedWeekday,
     ParentPhone,
     ParentType,
@@ -54,6 +55,7 @@ from app.models import (
     ATTENDANCE_STATUS_COLOR_KEYS,
     DEFAULT_EXCEL_EXPORT_TEMPLATES,
     excel_export_template_options,
+    expense_category_options,
     excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin, student_scope_clause
@@ -1533,6 +1535,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "subscriptions_enabled": tahfiz.subscriptions_enabled,
         "subscription_default_fee_minor": tahfiz.subscription_default_fee_minor,
         "subscription_currency": tahfiz.subscription_currency,
+        "expense_categories": expense_category_options(tahfiz),
     }
 
 
@@ -1576,7 +1579,10 @@ async def update_tahfiz_settings(
             subscription_count = await db.scalar(select(func.count()).select_from(StudentSubscription).where(
                 StudentSubscription.tahfiz_id == context.tahfiz_id,
             ))
-            if subscription_count:
+            expense_count = await db.scalar(select(func.count()).select_from(Expense).where(
+                Expense.tahfiz_id == context.tahfiz_id,
+            ))
+            if subscription_count or expense_count:
                 raise HTTPException(status_code=409, detail={
                     "code": "subscription_month_start_locked",
                     "message": "Month start day cannot change after subscription records exist",
@@ -1732,6 +1738,21 @@ async def update_tahfiz_settings(
         if tahfiz.excel_export_templates != serialized_templates:
             tahfiz.excel_export_templates = serialized_templates
             changed_fields.append("excel_export_templates")
+    if body.expense_categories is not None:
+        normalized_categories = [category.model_dump() for category in body.expense_categories]
+        category_ids = [category["id"] for category in normalized_categories]
+        if len(category_ids) != len(set(category_ids)) or not any(category["enabled"] for category in normalized_categories):
+            raise HTTPException(status_code=400, detail={"code": "invalid_expense_categories"})
+        serialized_categories = json.dumps(normalized_categories, ensure_ascii=False)
+        if tahfiz.expense_categories != serialized_categories:
+            tahfiz.expense_categories = serialized_categories
+            changed_fields.append("expense_categories")
+            db.add(AuditLog(
+                actor_user_id=context.user.id,
+                tahfiz_id=context.tahfiz_id,
+                action="finance.categories_updated",
+                details=f"categories={len(normalized_categories)}",
+            ))
     requested_limit = body.attendance_streak_limit if body.attendance_streak_limit is not None else body.excused_absence_streak_limit
     if requested_limit is not None:
         if tahfiz.excused_absence_streak_limit != requested_limit:
@@ -1773,7 +1794,10 @@ async def update_tahfiz_settings(
             subscription_count = await db.scalar(select(func.count()).select_from(StudentSubscription).where(
                 StudentSubscription.tahfiz_id == context.tahfiz_id,
             ))
-            if subscription_count:
+            expense_count = await db.scalar(select(func.count()).select_from(Expense).where(
+                Expense.tahfiz_id == context.tahfiz_id,
+            ))
+            if subscription_count or expense_count:
                 raise HTTPException(status_code=409, detail={
                     "code": "subscription_currency_locked",
                     "message": "Currency cannot change after subscription records exist",
