@@ -34,6 +34,11 @@ def session_status(session: Session) -> str:
     return "reopened" if session.reopened_at else "draft"
 
 
+def student_is_in_session(session: Session, attendance: Attendance | None) -> bool:
+    """Use persisted attendance as the membership snapshot once confirmed."""
+    return not session.is_confirmed or attendance is not None
+
+
 def session_summary(session: Session) -> dict:
     return {
         "id": session.id,
@@ -259,6 +264,10 @@ async def get_session_attendance(
             excused_weekday = excused_by_student.get(s.id)
             excused_note = excused_weekday.note if excused_weekday else None
             att = attendance_by_student.get(s.id)
+            # Attendance rows are the membership snapshot for a confirmed session.
+            # A student added later must not be synthesized into that snapshot.
+            if not student_is_in_session(session, att):
+                continue
             # Default sheikh_id is the student's assigned sheikh, overridden by attendance record
             default_sheikh_id = s.sheikh_id
             att_sheikh_id = att.sheikh_id if att and att.sheikh_id is not None else default_sheikh_id

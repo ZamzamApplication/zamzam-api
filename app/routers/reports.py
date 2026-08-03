@@ -27,6 +27,18 @@ from app.routers.subscriptions import monthly_period
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+def confirmed_session_records(
+    sessions: list[Session],
+    student_id: int,
+    attendance_lookup: dict[tuple[int, int], str],
+) -> dict[str, str | None]:
+    """Return null when a student was not in a confirmed session snapshot."""
+    return {
+        str(session.id): attendance_lookup.get((student_id, session.id))
+        for session in sessions
+    }
+
+
 def attendance_report_metrics(counts, tahfiz) -> dict:
     configured_statuses = attendance_status_options(tahfiz)
     configured_colors = attendance_status_color_options(tahfiz)
@@ -431,10 +443,12 @@ async def attendance_grid(
         student = student_map.get(sid)
         if not student:
             continue
-        records: dict[str, str] = {}
-        for sess in sessions:
-            default_status = "لا ينطبق" if student.registration_date and student.registration_date > sess.date else "غياب"
-            records[str(sess.id)] = att_lookup.get((sid, sess.id), default_status)
+        records = confirmed_session_records(sessions, sid, att_lookup)
+        # A confirmed session's attendance rows are its student snapshot. If the
+        # student has no rows in this range, they joined later and should not be
+        # shown as though they participated in these sessions.
+        if not any(status is not None for status in records.values()):
+            continue
         next_warning_number = warning_counts.get(sid, 0) + 1
         students_data.append({
             "id": sid,
