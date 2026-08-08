@@ -120,6 +120,12 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn("subscription_currency_locked", source)
         self.assertIn("Student.registration_date <= today", source)
 
+    def test_student_deletion_removes_unpaid_subscriptions(self):
+        source = inspect.getsource(management.delete_student_entity)
+        self.assertIn("sa_delete(StudentSubscription)", source)
+        self.assertIn("StudentSubscription.is_paid.is_(False)", source)
+        self.assertIn("values(student_id=None)", source)
+
     def test_management_preserves_history_and_locks_month_start(self):
         source = inspect.getsource(management)
         self.assertIn("StudentSubscription.student_id == student.id", source)
@@ -130,6 +136,12 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn('"subscriptions_enabled"', source)
         self.assertIn("subscription_default_fee_required", source)
         self.assertIn("subscription_currency_locked", source)
+
+    def test_cleanup_migration_removes_orphaned_unpaid_rows(self):
+        migration = (Path(__file__).parents[1] / "migrations/versions/20260808_15_cleanup_orphaned_unpaid_subscriptions.py").read_text()
+        self.assertIn('down_revision = "20260808_14"', migration)
+        self.assertIn("DELETE FROM student_subscriptions", migration)
+        self.assertIn("student_id IS NULL AND is_paid = FALSE", migration)
 
     def test_migration_contains_required_constraints_and_snapshots(self):
         migration = (Path(__file__).parents[1] / "migrations/versions/20260801_11_student_subscriptions.py").read_text()

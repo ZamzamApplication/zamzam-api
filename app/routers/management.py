@@ -366,6 +366,11 @@ async def delete_student_entity(
     *,
     delete_attendance: bool,
 ) -> None:
+    await db.execute(sa_delete(StudentSubscription).where(
+        StudentSubscription.student_id == student.id,
+        StudentSubscription.tahfiz_id == tahfiz_id,
+        StudentSubscription.is_paid.is_(False),
+    ))
     await db.execute(sa_update(StudentSubscription).where(
         StudentSubscription.student_id == student.id,
         StudentSubscription.tahfiz_id == tahfiz_id,
