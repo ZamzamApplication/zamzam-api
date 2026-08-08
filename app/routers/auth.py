@@ -26,6 +26,7 @@ from app.models import (
     attendance_status_options,
     attendance_status_color_options,
     attendance_streak_status_option,
+    present_status_option,
     excel_export_template_options,
     excused_absence_reset_status_options,
 )
@@ -603,6 +604,7 @@ async def get_me(
             "attendance_streak_status": attendance_streak_status_option(tahfiz),
             "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
+            "present_status": present_status_option(tahfiz),
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),

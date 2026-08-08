@@ -75,6 +75,7 @@ class TahfizOut(BaseModel):
     attendance_streak_status: str = "غياب بعذر"
     attendance_streak_limit: int = 3
     attendance_streak_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
+    present_status: str = "حاضر"
     attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
@@ -541,6 +542,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_streak_status: str | None = Field(default=None, min_length=1, max_length=50)
     attendance_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     attendance_streak_reset_statuses: list[str] | None = None
+    present_status: str | None = Field(default=None, min_length=1, max_length=50)
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = Field(default=None, max_length=500)

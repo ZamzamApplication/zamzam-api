@@ -136,6 +136,23 @@ class AttendanceStatusSettingsTests(unittest.TestCase):
         self.assertEqual(metrics["present"], 4)
         self.assertEqual(metrics["excused"], 1)
 
+    def test_report_metrics_follow_configured_present_status_without_label_or_color(self):
+        tahfiz = Tahfiz(
+            name="Tenant",
+            status=TahfizStatus.active,
+            attendance_statuses='["✓", "غياب"]',
+            attendance_status_colors='{"✓":"violet","غياب":"slate"}',
+            present_status="✓",
+        )
+
+        metrics = attendance_report_metrics(
+            Counter({"✓": 5, "غياب": 2}),
+            tahfiz,
+        )
+
+        self.assertEqual(metrics["present"], 5)
+        self.assertEqual(metrics["attendance_rate"], 71.4)
+
 
 class SavedFilterTenantContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_is_scoped_to_current_tahfiz(self):

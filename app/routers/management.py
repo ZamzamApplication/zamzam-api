@@ -52,6 +52,7 @@ from app.models import (
     attendance_status_options,
     attendance_status_color_options,
     attendance_streak_status_option,
+    present_status_option,
     ATTENDANCE_STATUS_COLOR_KEYS,
     DEFAULT_EXCEL_EXPORT_TEMPLATES,
     excel_export_template_options,
@@ -813,7 +814,8 @@ async def student_profile(
         ],
         "attendance": {
             "total": sum(attendance_counts.values()),
-            "present": attendance_counts.get("حاضر", 0),
+            "present": attendance_counts.get(present_status_option(context.tahfiz), 0),
+            "present_status": present_status_option(context.tahfiz),
             "absent": attendance_counts.get("غياب", 0),
             "excused": attendance_counts.get("غياب بعذر", 0),
             "not_applicable": attendance_counts.get("لا ينطبق", 0),
@@ -1527,6 +1529,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "attendance_streak_status": attendance_streak_status_option(tahfiz),
         "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
         "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
+        "present_status": present_status_option(tahfiz),
         "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
@@ -1621,6 +1624,9 @@ async def update_tahfiz_settings(
                 )
                 .values(status=target, revision=Attendance.revision + 1, updated_at=utcnow())
             )
+            if (tahfiz.present_status or "").strip() == source:
+                tahfiz.present_status = target
+                changed_fields.append("present_status")
         if normalized_renames:
             changed_fields.append("attendance_status_renames")
     if body.attendance_streak_alert_enabled is not None and tahfiz.attendance_streak_alert_enabled != body.attendance_streak_alert_enabled:
@@ -1639,6 +1645,13 @@ async def update_tahfiz_settings(
         if tahfiz.attendance_streak_status != tracked_status:
             tahfiz.attendance_streak_status = tracked_status
             changed_fields.append("attendance_streak_status")
+    if body.present_status is not None:
+        requested_present_status = body.present_status.strip()
+        if requested_present_status not in final_statuses:
+            raise HTTPException(status_code=400, detail="Present attendance status must be configured")
+        if (tahfiz.present_status or "").strip() != requested_present_status:
+            tahfiz.present_status = requested_present_status
+            changed_fields.append("present_status")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),

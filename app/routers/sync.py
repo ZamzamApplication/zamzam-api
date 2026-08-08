@@ -27,6 +27,7 @@ from app.models import (
     attendance_status_color_options,
     attendance_streak_status_option,
     excused_absence_reset_status_options,
+    present_status_option,
 )
 from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.routers.progress import progress_snapshot
@@ -194,6 +195,7 @@ async def bootstrap(
             "attendance_streak_status": attendance_streak_status_option(context.tahfiz),
             "attendance_streak_limit": context.tahfiz.excused_absence_streak_limit,
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(context.tahfiz),
+            "present_status": present_status_option(context.tahfiz),
             "progress_tracking_enabled": context.tahfiz.progress_tracking_enabled,
             "week_start_day": context.tahfiz.week_start_day,
             "month_start_day": context.tahfiz.month_start_day,

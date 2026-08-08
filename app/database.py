@@ -479,6 +479,10 @@ async def migrate():
             await conn.execute(text(
                 "ALTER TABLE tahfiz ADD COLUMN attendance_streak_status VARCHAR(50) NOT NULL DEFAULT 'غياب بعذر'"
             ))
+        if "present_status" not in tahfiz_columns:
+            await conn.execute(text(
+                "ALTER TABLE tahfiz ADD COLUMN present_status VARCHAR(50) NOT NULL DEFAULT 'حاضر'"
+            ))
         if "contact_phone" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN contact_phone VARCHAR(20)"))
         if "status" not in tahfiz_columns:

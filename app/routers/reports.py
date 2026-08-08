@@ -20,6 +20,7 @@ from app.models import (
     attendance_status_color_options,
     attendance_status_options,
     excel_export_template_options,
+    present_status_option,
 )
 from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.routers.subscriptions import monthly_period
@@ -54,12 +55,12 @@ def attendance_report_metrics(counts, tahfiz) -> dict:
             None,
         )
 
-    present_status = status_with_role(AttendanceStatus.present.value, "green")
+    present_status = present_status_option(tahfiz)
     excused_status = status_with_role(AttendanceStatus.excused.value, "amber")
     absent_status = status_with_role(AttendanceStatus.absent.value, "slate")
     excluded_status = status_with_role(AttendanceStatus.not_applicable.value, "sky")
     applicable_statuses = [status for status in ordered_statuses if status != excluded_status]
-    attended_statuses = {status for status in (present_status, excused_status) if status}
+    attended_statuses = {status for status in (present_status, excused_status) if status and status in ordered_statuses}
     applicable = sum(status_counts[status] for status in applicable_statuses)
     attended = sum(status_counts[status] for status in attended_statuses)
     return {
@@ -67,7 +68,7 @@ def attendance_report_metrics(counts, tahfiz) -> dict:
         "total_records": sum(status_counts.values()),
         "total_applicable": applicable,
         "attendance_rate": round(attended / applicable * 100, 1) if applicable else 0,
-        "present": status_counts.get(present_status, 0) if present_status else 0,
+        "present": status_counts.get(present_status, 0),
         "excused": status_counts.get(excused_status, 0) if excused_status else 0,
         "absent": status_counts.get(absent_status, 0) if absent_status else 0,
         "not_applicable": status_counts.get(excluded_status, 0) if excluded_status else 0,
@@ -292,11 +293,12 @@ async def student_streak(
     )
     total = result.scalar() or 0
 
+    present_status = present_status_option(context.tahfiz)
     present_count = await db.execute(
         select(func.count(Attendance.id))
         .where(
             Attendance.student_id == student_id,
-            Attendance.status == AttendanceStatus.present,
+            Attendance.status == present_status,
         )
         .join(Session)
         .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)

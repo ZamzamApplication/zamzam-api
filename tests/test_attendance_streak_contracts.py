@@ -6,6 +6,7 @@ from app.models import (
     Tahfiz,
     attendance_status_color_options,
     excused_absence_reset_status_options,
+    present_status_option,
 )
 
 
@@ -58,3 +59,35 @@ class AttendanceColorSettingsTests(unittest.TestCase):
             excused_absence_reset_statuses=json.dumps(["حاضر", "عن بعد"], ensure_ascii=False),
         )
         self.assertEqual(excused_absence_reset_status_options(tahfiz), ["حاضر"])
+
+
+class PresentStatusOptionTests(unittest.TestCase):
+    def test_defaults_to_the_present_label(self):
+        tahfiz = Tahfiz(name="اختبار")
+        self.assertEqual(present_status_option(tahfiz), "حاضر")
+
+    def test_uses_the_configured_present_status(self):
+        tahfiz = Tahfiz(
+            name="اختبار",
+            attendance_statuses=json.dumps(["✓", "غياب", "لا ينطبق"], ensure_ascii=False),
+            present_status="✓",
+        )
+        self.assertEqual(present_status_option(tahfiz), "✓")
+
+    def test_falls_back_to_the_green_status_when_present_is_not_configured(self):
+        tahfiz = Tahfiz(
+            name="اختبار",
+            attendance_statuses=json.dumps(["موجود", "غياب"], ensure_ascii=False),
+            attendance_status_colors='{"موجود":"green","غياب":"slate"}',
+            present_status="حاضر",
+        )
+        self.assertEqual(present_status_option(tahfiz), "موجود")
+
+    def test_returns_first_status_when_present_label_and_green_are_absent(self):
+        tahfiz = Tahfiz(
+            name="اختبار",
+            attendance_statuses=json.dumps(["عن بعد", "غياب"], ensure_ascii=False),
+            attendance_status_colors='{"عن بعد":"violet","غياب":"slate"}',
+            present_status="حاضر",
+        )
+        self.assertEqual(present_status_option(tahfiz), "عن بعد")
