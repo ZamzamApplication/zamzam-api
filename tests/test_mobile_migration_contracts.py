@@ -10,6 +10,32 @@ from sqlalchemy import create_engine, inspect, text
 
 
 class MobileMigrationUpgradeTests(unittest.TestCase):
+    def test_student_quran_plan_migration_creates_forward_only_plan_table(self):
+        migration = importlib.import_module("migrations.versions.20260809_16_student_quran_plans")
+        with TemporaryDirectory(prefix="zamzam-quran-plan-migration-") as temporary:
+            path = Path(temporary) / "production.db"
+            engine = create_engine(f"sqlite:///{path}")
+            with engine.begin() as connection:
+                connection.execute(text("CREATE TABLE tahfiz (id INTEGER PRIMARY KEY)"))
+                connection.execute(text("CREATE TABLE students (id INTEGER PRIMARY KEY)"))
+                operations = Operations(MigrationContext.configure(connection))
+                original_op = migration.op
+                migration.op = operations
+                try:
+                    migration.upgrade()
+                finally:
+                    migration.op = original_op
+
+                inspector = inspect(connection)
+                self.assertIn("student_quran_plans", inspector.get_table_names())
+                columns = {column["name"] for column in inspector.get_columns("student_quran_plans")}
+                self.assertTrue({
+                    "tahfiz_id", "student_id", "category", "increment_unit",
+                    "increment_amount", "next_surah", "next_ayah", "next_page",
+                    "last_advanced_session_id",
+                }.issubset(columns))
+            engine.dispose()
+
     def test_existing_sqlite_database_gets_timestamp_without_nonconstant_default(self):
         migration = importlib.import_module("migrations.versions.20260724_02_mobile_sync")
         with TemporaryDirectory(prefix="zamzam-mobile-migration-") as temporary:

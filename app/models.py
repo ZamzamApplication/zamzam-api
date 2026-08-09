@@ -279,6 +279,12 @@ class QuranRangeType(str, enum.Enum):
     page = "page"
 
 
+class WardIncrementUnit(str, enum.Enum):
+    ayahs = "ayahs"
+    lines = "lines"
+    pages = "pages"
+
+
 class StudentGoalStatus(str, enum.Enum):
     active = "active"
     completed = "completed"
@@ -495,6 +501,7 @@ class Student(Base):
     warnings: Mapped[list["StudentWarning"]] = relationship("StudentWarning", back_populates="student", cascade="all, delete-orphan", order_by="StudentWarning.created_at.desc()")
     excused_weekdays: Mapped[list["ExcusedWeekday"]] = relationship("ExcusedWeekday", back_populates="student", cascade="all, delete-orphan")
     excused_periods: Mapped[list["StudentExcusedPeriod"]] = relationship("StudentExcusedPeriod", back_populates="student", cascade="all, delete-orphan")
+    quran_plans: Mapped[list["StudentQuranPlan"]] = relationship("StudentQuranPlan", back_populates="student", cascade="all, delete-orphan")
 
 
 class StudentSubscription(Base):
@@ -719,6 +726,30 @@ class QuranProgressEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class StudentQuranPlan(Base):
+    __tablename__ = "student_quran_plans"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "student_id", "category", name="uq_student_quran_plan_category"),
+        Index("ix_student_quran_plans_tenant_student", "tahfiz_id", "student_id"),
+        CheckConstraint("increment_amount > 0", name="ck_student_quran_plan_positive_increment"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
+    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    increment_unit: Mapped[WardIncrementUnit] = mapped_column(Enum(WardIncrementUnit), nullable=False)
+    increment_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    next_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_advanced_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    student: Mapped[Student] = relationship("Student", back_populates="quran_plans")
 
 
 class QuranProgressRevision(Base):

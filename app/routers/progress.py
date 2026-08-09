@@ -7,6 +7,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.quran_data import ayahs_to_end, lines_to_end, next_ayah, pages_to_end
 from app.time import utcnow
 from app.models import (
     AuditLog,
@@ -19,12 +20,15 @@ from app.models import (
     Student,
     StudentGoal,
     StudentGoalStatus,
+    StudentQuranPlan,
     User,
+    WardIncrementUnit,
 )
-from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
+from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin, student_scope_clause
 from app.schemas import (
     CreateStudentGoalRequest,
     QuranProgressBatchRequest,
+    StudentQuranPlansRequest,
     UpdateStudentGoalRequest,
 )
 
@@ -101,6 +105,151 @@ def serialize_goal(goal: StudentGoal) -> dict:
     }
 
 
+def serialize_plan(plan: StudentQuranPlan) -> dict:
+    return {
+        "id": plan.id,
+        "student_id": plan.student_id,
+        "category": plan.category.value,
+        "increment_unit": plan.increment_unit.value,
+        "increment_amount": plan.increment_amount,
+        "next_surah": plan.next_surah,
+        "next_ayah": plan.next_ayah,
+        "next_page": plan.next_page,
+        "updated_at": plan.updated_at.isoformat(),
+    }
+
+
+def plan_suggestion(plan: StudentQuranPlan) -> dict:
+    suggestion = {
+        "student_id": plan.student_id,
+        "category": plan.category.value,
+        "quality_score": 0,
+        "mistakes": 0,
+        "notes": None,
+        "next_assignment": None,
+    }
+    if plan.increment_unit == WardIncrementUnit.pages:
+        start_page = plan.next_page or 1
+        return {
+            **suggestion,
+            "range_type": QuranRangeType.page.value,
+            "from_surah": None,
+            "from_ayah": None,
+            "to_surah": None,
+            "to_ayah": None,
+            "from_page": start_page,
+            "to_page": pages_to_end(start_page, plan.increment_amount),
+        }
+    start_surah, start_ayah = plan.next_surah or 1, plan.next_ayah or 1
+    end_surah, end_ayah = (
+        lines_to_end(start_surah, start_ayah, plan.increment_amount)
+        if plan.increment_unit == WardIncrementUnit.lines
+        else ayahs_to_end(start_surah, start_ayah, plan.increment_amount)
+    )
+    return {
+        **suggestion,
+        "range_type": QuranRangeType.surah_ayah.value,
+        "from_surah": start_surah,
+        "from_ayah": start_ayah,
+        "to_surah": end_surah,
+        "to_ayah": end_ayah,
+        "from_page": None,
+        "to_page": None,
+    }
+
+
+@router.get("/students/{student_id}/quran-plans")
+async def student_quran_plans(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    ensure_enabled(context)
+    student = await db.scalar(select(Student.id).where(
+        Student.id == student_id,
+        student_scope_clause(context),
+    ))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    plans = (await db.execute(
+        select(StudentQuranPlan)
+        .where(
+            StudentQuranPlan.student_id == student_id,
+            StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+        )
+        .order_by(StudentQuranPlan.category)
+    )).scalars().all()
+    return {"plans": [serialize_plan(plan) for plan in plans]}
+
+
+@router.put("/students/{student_id}/quran-plans")
+async def update_student_quran_plans(
+    student_id: int,
+    body: StudentQuranPlansRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    ensure_enabled(context)
+    student = await db.scalar(select(Student.id).where(
+        Student.id == student_id,
+        Student.tahfiz_id == context.tahfiz_id,
+    ))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    existing = (await db.execute(select(StudentQuranPlan).where(
+        StudentQuranPlan.student_id == student_id,
+        StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+    ))).scalars().all()
+    existing_by_category = {plan.category.value: plan for plan in existing}
+    requested_categories = {item.category for item in body.plans}
+
+    for plan in existing:
+        if plan.category.value not in requested_categories:
+            await db.delete(plan)
+    saved: list[StudentQuranPlan] = []
+    for item in body.plans:
+        plan = existing_by_category.get(item.category)
+        if plan is None:
+            plan = StudentQuranPlan(
+                tahfiz_id=context.tahfiz_id,
+                student_id=student_id,
+                category=ProgressCategory(item.category),
+            )
+            db.add(plan)
+        plan.increment_unit = WardIncrementUnit(item.increment_unit)
+        plan.increment_amount = item.increment_amount
+        plan.next_surah = item.next_surah if item.increment_unit != "pages" else None
+        plan.next_ayah = item.next_ayah if item.increment_unit != "pages" else None
+        plan.next_page = item.next_page if item.increment_unit == "pages" else None
+        plan.updated_at = utcnow()
+        try:
+            plan_suggestion(plan)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        saved.append(plan)
+
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student.quran_plans_updated",
+        details=json.dumps({
+            "student_id": student_id,
+            "plans": [
+                {
+                    "category": item.category,
+                    "increment_unit": item.increment_unit,
+                    "increment_amount": item.increment_amount,
+                }
+                for item in body.plans
+            ],
+        }, ensure_ascii=False, sort_keys=True),
+    ))
+    await db.commit()
+    for plan in saved:
+        await db.refresh(plan)
+    return {"plans": [serialize_plan(plan) for plan in saved]}
+
+
 @router.get("/sessions/{session_id}/progress")
 async def session_progress(
     session_id: int,
@@ -108,7 +257,7 @@ async def session_progress(
     context: TenantContext = Depends(get_tenant_context),
 ):
     if not context.tahfiz.progress_tracking_enabled:
-        return {"enabled": False, "entries": [], "previous_entries": []}
+        return {"enabled": False, "entries": [], "previous_entries": [], "suggested_entries": []}
     session = await db.scalar(select(Session).where(
         Session.id == session_id,
         Session.tahfiz_id == context.tahfiz_id,
@@ -152,10 +301,20 @@ async def session_progress(
             )
         )
     )).scalars().all()
+    plans = (await db.execute(
+        select(StudentQuranPlan)
+        .join(Student, Student.id == StudentQuranPlan.student_id)
+        .where(
+            StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+            student_scope_clause(context),
+        )
+        .order_by(StudentQuranPlan.student_id, StudentQuranPlan.category)
+    )).scalars().all()
     return {
         "enabled": True,
         "entries": [serialize_entry(entry) for entry in entries],
         "previous_entries": [serialize_entry(entry) for entry in previous_rows],
+        "suggested_entries": [plan_suggestion(plan) for plan in plans],
     }
 
 
@@ -204,6 +363,11 @@ async def save_session_progress(
         (entry.student_id, entry.category.value): entry
         for entry in existing_entries
     }
+    plans = (await db.execute(select(StudentQuranPlan).where(
+        StudentQuranPlan.student_id.in_(student_ids),
+        StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+    ))).scalars().all()
+    plans_by_key = {(plan.student_id, plan.category.value): plan for plan in plans}
     changed_records: list[dict] = []
     for item in body.updates:
         try:
@@ -261,6 +425,18 @@ async def save_session_progress(
             },
         )
         await db.execute(statement)
+        plan = plans_by_key.get((item.student_id, category.value))
+        if plan and existing is None and plan.last_advanced_session_id != session_id:
+            if plan.increment_unit == WardIncrementUnit.pages:
+                if range_type != QuranRangeType.page or item.to_page is None:
+                    raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
+                plan.next_page = min(item.to_page + 1, 604)
+            else:
+                if range_type != QuranRangeType.surah_ayah or item.to_surah is None or item.to_ayah is None:
+                    raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
+                plan.next_surah, plan.next_ayah = next_ayah(item.to_surah, item.to_ayah)
+            plan.last_advanced_session_id = session_id
+            plan.updated_at = utcnow()
 
     db.add(AuditLog(
         actor_user_id=context.user.id,

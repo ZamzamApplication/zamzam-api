@@ -4,11 +4,11 @@ from datetime import datetime
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.models import Session, Tahfiz, TahfizStatus, User, UserRole
+from app.models import ProgressCategory, Session, StudentQuranPlan, Tahfiz, TahfizStatus, User, UserRole, WardIncrementUnit
 from app.routers.auth import TenantContext
-from app.routers.progress import ensure_enabled, student_progress
+from app.routers.progress import ensure_enabled, plan_suggestion, student_progress
 from app.routers.sessions import session_status
-from app.schemas import CreateStudentGoalRequest, QuranProgressItem
+from app.schemas import CreateStudentGoalRequest, QuranProgressItem, StudentQuranPlansRequest
 
 
 def make_context(*, enabled: bool) -> TenantContext:
@@ -50,6 +50,50 @@ class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
 
 
 class QuranRangeValidationTests(unittest.TestCase):
+    def test_student_plans_support_independent_units(self):
+        request = StudentQuranPlansRequest(plans=[
+            {"category": "new_memorization", "increment_unit": "lines", "increment_amount": 5, "next_surah": 2, "next_ayah": 1},
+            {"category": "recent_revision", "increment_unit": "ayahs", "increment_amount": 10, "next_surah": 1, "next_ayah": 1},
+            {"category": "old_revision", "increment_unit": "pages", "increment_amount": 2, "next_page": 50},
+        ])
+        self.assertEqual([plan.increment_unit for plan in request.plans], ["lines", "ayahs", "pages"])
+
+    def test_page_plan_requires_starting_page(self):
+        with self.assertRaises(ValidationError):
+            StudentQuranPlansRequest(plans=[{
+                "category": "new_memorization",
+                "increment_unit": "pages",
+                "increment_amount": 2,
+            }])
+
+    def test_plan_suggestion_uses_offline_line_mapping(self):
+        plan = StudentQuranPlan(
+            id=1,
+            tahfiz_id=1,
+            student_id=3,
+            category=ProgressCategory.new_memorization,
+            increment_unit=WardIncrementUnit.lines,
+            increment_amount=15,
+            next_surah=2,
+            next_ayah=6,
+        )
+        suggestion = plan_suggestion(plan)
+        self.assertEqual((suggestion["from_surah"], suggestion["from_ayah"]), (2, 6))
+        self.assertEqual((suggestion["to_surah"], suggestion["to_ayah"]), (2, 16))
+
+    def test_page_plan_caps_at_end_of_mushaf(self):
+        plan = StudentQuranPlan(
+            id=2,
+            tahfiz_id=1,
+            student_id=3,
+            category=ProgressCategory.old_revision,
+            increment_unit=WardIncrementUnit.pages,
+            increment_amount=5,
+            next_page=603,
+        )
+        suggestion = plan_suggestion(plan)
+        self.assertEqual((suggestion["from_page"], suggestion["to_page"]), (603, 604))
+
     def test_page_goal_accepts_valid_quran_pages(self):
         goal = CreateStudentGoalRequest(
             range_type="page",

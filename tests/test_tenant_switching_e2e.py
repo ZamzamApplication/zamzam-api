@@ -148,6 +148,64 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history.json()["revisions"][0]["before"]["to_surah"], 2)
         self.assertEqual(history.json()["revisions"][0]["after"]["to_surah"], 3)
 
+    async def test_student_quran_plan_suggests_and_advances_only_once(self):
+        headers = {**self.headers, "X-Tahfiz-ID": "1"}
+        configured = await self.client.put(
+            "/students/101/quran-plans",
+            headers=headers,
+            json={"plans": [{
+                "category": "new_memorization",
+                "increment_unit": "ayahs",
+                "increment_amount": 3,
+                "next_surah": 2,
+                "next_ayah": 285,
+            }]},
+        )
+        preview = await self.client.get("/sessions/201/progress", headers=headers)
+
+        self.assertEqual(configured.status_code, 200, configured.text)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        suggestion = preview.json()["suggested_entries"][0]
+        self.assertEqual(
+            (suggestion["from_surah"], suggestion["from_ayah"], suggestion["to_surah"], suggestion["to_ayah"]),
+            (2, 285, 3, 1),
+        )
+
+        payload = {"updates": [{**suggestion, "quality_score": 4}]}
+        first_save = await self.client.post("/sessions/201/progress/batch", headers=headers, json=payload)
+        after_first = await self.client.get("/students/101/quran-plans", headers=headers)
+        second_save = await self.client.post(
+            "/sessions/201/progress/batch",
+            headers=headers,
+            json={"updates": [{**suggestion, "quality_score": 5}]},
+        )
+        after_second = await self.client.get("/students/101/quran-plans", headers=headers)
+
+        self.assertEqual(first_save.status_code, 200, first_save.text)
+        self.assertEqual(second_save.status_code, 200, second_save.text)
+        self.assertEqual(
+            (after_first.json()["plans"][0]["next_surah"], after_first.json()["plans"][0]["next_ayah"]),
+            (3, 2),
+        )
+        self.assertEqual(after_second.json()["plans"], after_first.json()["plans"])
+
+    async def test_quran_plans_are_tenant_scoped(self):
+        first_headers = {**self.headers, "X-Tahfiz-ID": "1"}
+        second_headers = {**self.headers, "X-Tahfiz-ID": "2"}
+        foreign_write = await self.client.put(
+            "/students/102/quran-plans",
+            headers=first_headers,
+            json={"plans": [{
+                "category": "old_revision",
+                "increment_unit": "pages",
+                "increment_amount": 2,
+                "next_page": 10,
+            }]},
+        )
+        disabled_tenant = await self.client.get("/students/102/quran-plans", headers=second_headers)
+        self.assertEqual(foreign_write.status_code, 404)
+        self.assertEqual(disabled_tenant.status_code, 409)
+
     async def test_invitation_can_be_listed_resent_and_revoked_within_workspace(self):
         headers = {**self.headers, "X-Tahfiz-ID": "1"}
         created = await self.client.post(

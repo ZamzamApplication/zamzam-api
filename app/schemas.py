@@ -722,6 +722,35 @@ class QuranProgressBatchRequest(BaseModel):
     updates: list[QuranProgressItem] = Field(min_length=1, max_length=500)
 
 
+class StudentQuranPlanInput(BaseModel):
+    category: Literal["new_memorization", "recent_revision", "old_revision"]
+    increment_unit: Literal["ayahs", "lines", "pages"]
+    increment_amount: int = Field(ge=1, le=604)
+    next_surah: int | None = Field(default=None, ge=1, le=114)
+    next_ayah: int | None = Field(default=None, ge=1)
+    next_page: int | None = Field(default=None, ge=1, le=604)
+
+    @model_validator(mode="after")
+    def validate_start(self):
+        if self.increment_unit == "pages":
+            if self.next_page is None:
+                raise ValueError("Page plans require a starting page")
+        elif self.next_surah is None or self.next_ayah is None:
+            raise ValueError("Ayah and line plans require a starting surah and ayah")
+        return self
+
+
+class StudentQuranPlansRequest(BaseModel):
+    plans: list[StudentQuranPlanInput] = Field(max_length=3)
+
+    @model_validator(mode="after")
+    def validate_categories(self):
+        categories = [plan.category for plan in self.plans]
+        if len(categories) != len(set(categories)):
+            raise ValueError("Each Qur'an plan category may only appear once")
+        return self
+
+
 class CreateStudentGoalRequest(QuranRangeInput):
     target_date: date | None = None
     notes: str | None = Field(default=None, max_length=4000)

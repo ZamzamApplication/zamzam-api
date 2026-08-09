@@ -41,6 +41,7 @@ from app.models import (
     Student,
     StudentExcusedPeriod,
     StudentGoal,
+    StudentQuranPlan,
     StudentStatus,
     StudentSubscription,
     StudentWarning,
@@ -366,6 +367,10 @@ async def delete_student_entity(
     *,
     delete_attendance: bool,
 ) -> None:
+    await db.execute(sa_delete(StudentQuranPlan).where(
+        StudentQuranPlan.student_id == student.id,
+        StudentQuranPlan.tahfiz_id == tahfiz_id,
+    ))
     await db.execute(sa_delete(StudentSubscription).where(
         StudentSubscription.student_id == student.id,
         StudentSubscription.tahfiz_id == tahfiz_id,
