@@ -57,6 +57,11 @@ class SignupRequest(BaseModel):
     contact_phone: str | None = Field(default=None, max_length=20)
 
 
+class CreateTahfizRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    contact_phone: str | None = Field(default=None, max_length=20)
+
+
 class TahfizOut(BaseModel):
     id: int
     name: str
@@ -484,6 +489,7 @@ class ExcelExportColumnSettings(BaseModel):
     enabled: bool = True
     custom: bool = False
     width: int = Field(default=18, ge=1, le=60)
+    header_font_family: str = Field(default="Arial", min_length=1, max_length=80)
     show_header: bool = True
     subcolumns: list[ExcelExportSubcolumnSettings] = Field(default_factory=list, max_length=10)
 

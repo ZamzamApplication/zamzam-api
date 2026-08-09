@@ -10,6 +10,7 @@ from app.media import signed_media_url
 from app.models import (
     Attendance,
     AttendanceStatus,
+    QuranProgressEntry,
     Session,
     Sheikh,
     Student,
@@ -410,6 +411,32 @@ async def attendance_grid(
     )
     attendance_records = result.scalars().all()
 
+    progress_entries = (await db.execute(
+        select(QuranProgressEntry)
+        .join(Session, Session.id == QuranProgressEntry.session_id)
+        .where(
+            QuranProgressEntry.student_id.in_(student_ids),
+            QuranProgressEntry.session_id.in_(session_ids),
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+            QuranProgressEntry.category.in_(["new_memorization", "recent_revision", "old_revision"]),
+        )
+        .order_by(Session.date, Session.id, QuranProgressEntry.updated_at, QuranProgressEntry.id)
+    )).scalars().all() if context.tahfiz.progress_tracking_enabled else []
+    quran_progress_ranges: dict[int, dict[str, dict]] = {}
+    for entry in progress_entries:
+        category_range = quran_progress_ranges.setdefault(entry.student_id, {}).setdefault(entry.category.value, {})
+        snapshot = {
+            "range_type": entry.range_type.value,
+            "from_surah": entry.from_surah,
+            "from_ayah": entry.from_ayah,
+            "to_surah": entry.to_surah,
+            "to_ayah": entry.to_ayah,
+            "from_page": entry.from_page,
+            "to_page": entry.to_page,
+        }
+        category_range.setdefault("first", snapshot)
+        category_range["last"] = snapshot
+
     warning_count_result = await db.execute(
         select(StudentWarning.student_id, func.count(StudentWarning.id))
         .where(StudentWarning.student_id.in_(student_ids))
@@ -461,6 +488,7 @@ async def attendance_grid(
             "next_warning_number": next_warning_number,
             "remaining_warnings": max(max_warnings - next_warning_number, 0),
             **({"subscription_amount_minor": subscription_amounts.get(sid)} if context.effective_role in (UserRole.admin, UserRole.super_admin) else {}),
+            "quran_progress_ranges": quran_progress_ranges.get(sid, {}),
             "records": records,
         })
 

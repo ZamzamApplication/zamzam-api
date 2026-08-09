@@ -51,6 +51,9 @@ def test_excel_export_template_columns_are_validated():
     request = UpdateTahfizSettingsRequest(excel_export_templates=DEFAULT_EXCEL_EXPORT_TEMPLATES)
 
     assert request.excel_export_templates["attendance"].columns[0].id == "serial"
+    assert request.excel_export_templates["attendance"].columns[0].header_font_family == "Arial"
+    memorization = next(column for column in request.excel_export_templates["attendance"].columns if column.id == "memorization")
+    assert [subcolumn.id for subcolumn in memorization.subcolumns] == ["from", "to"]
     assert request.excel_export_templates["attendance"].header_font_family == "Arial"
     assert request.excel_export_templates["attendance"].header_background_color == "#FFFFFF"
     assert request.excel_export_templates["attendance"].cell_font_family == "Arial"
@@ -101,3 +104,37 @@ def test_serial_column_is_added_to_existing_saved_templates_without_resetting_th
     assert templates["attendance"]["cell_bold"] is False
     assert templates["attendance"]["date_font_family"] == "Arial"
     assert templates["attendance"]["date_font_size"] == 12
+
+
+def test_legacy_quran_custom_columns_are_promoted_without_duplicates():
+    saved = json.loads(json.dumps(DEFAULT_EXCEL_EXPORT_TEMPLATES))
+    saved["attendance"]["columns"] = [
+        column for column in saved["attendance"]["columns"]
+        if column["id"] not in {"memorization", "revision"}
+    ]
+    saved["attendance"]["columns"].extend([
+        {
+            "id": "custom_memorization", "label": "الحفظ", "enabled": True,
+            "custom": True, "width": 20, "subcolumns": [
+                {"id": "custom_from", "label": "من", "width": 18},
+                {"id": "custom_to", "label": "الي", "width": 18},
+            ],
+        },
+        {
+            "id": "custom_revision", "label": "المراجعة", "enabled": True,
+            "custom": True, "width": 20, "subcolumns": [
+                {"id": "custom_from", "label": "من", "width": 18},
+                {"id": "custom_to", "label": "إلى", "width": 18},
+            ],
+        },
+    ])
+    tahfiz = Tahfiz(
+        id=1, name="اختبار", status=TahfizStatus.active,
+        excel_export_templates=json.dumps(saved, ensure_ascii=False),
+    )
+
+    columns = serialize_tahfiz(tahfiz)["excel_export_templates"]["attendance"]["columns"]
+
+    assert [column["id"] for column in columns].count("memorization") == 1
+    assert [column["id"] for column in columns].count("revision") == 1
+    assert next(column for column in columns if column["id"] == "memorization")["header_font_family"] == "Arial"

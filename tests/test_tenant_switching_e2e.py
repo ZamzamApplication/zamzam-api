@@ -4,11 +4,25 @@ from datetime import date
 from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import SavedFilter, Session, Student, Tahfiz, TahfizStatus, User, UserRole, UserTahfizMembership
+from app.models import (
+    Attendance,
+    ProgressCategory,
+    QuranProgressEntry,
+    QuranRangeType,
+    SavedFilter,
+    Session,
+    Student,
+    Tahfiz,
+    TahfizStatus,
+    User,
+    UserRole,
+    UserTahfizMembership,
+)
 from app.routers.auth import create_access_token
 
 
@@ -106,6 +120,43 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["tahfiz_id"], 2)
         self.assertEqual(me.json()["default_tahfiz_id"], 2)
+
+    async def test_existing_user_can_create_linked_tahfiz_without_new_account(self):
+        response = await self.client.post(
+            "/auth/tahfiz",
+            headers={**self.headers, "X-Tahfiz-ID": "1"},
+            json={"name": "تحفيظ جديد", "contact_phone": "01000000000"},
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["status"], "pending")
+        async with self.sessions() as db:
+            self.assertEqual(await db.scalar(select(func.count(User.id))), 1)
+            tahfiz = await db.get(Tahfiz, response.json()["tahfiz_id"])
+            membership = await db.get(UserTahfizMembership, response.json()["membership_id"])
+            user = await db.get(User, 10)
+            self.assertEqual(tahfiz.owner_user_id, 10)
+            self.assertEqual(membership.user_id, 10)
+            self.assertEqual(membership.role, UserRole.admin)
+            self.assertEqual(user.default_tahfiz_id, 1)
+
+    async def test_excel_quran_columns_and_per_header_fonts_can_be_saved(self):
+        headers = {**self.headers, "X-Tahfiz-ID": "1"}
+        current = await self.client.get("/tahfiz/settings", headers=headers)
+        templates = current.json()["excel_export_templates"]
+        memorization = next(column for column in templates["attendance"]["columns"] if column["id"] == "memorization")
+        memorization["header_font_family"] = "Amiri"
+
+        response = await self.client.put(
+            "/tahfiz/settings",
+            headers=headers,
+            json={"excel_export_templates": templates},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = next(column for column in response.json()["excel_export_templates"]["attendance"]["columns"] if column["id"] == "memorization")
+        self.assertEqual(saved["header_font_family"], "Amiri")
+        self.assertEqual([item["id"] for item in saved["subcolumns"]], ["from", "to"])
 
     async def test_unknown_workspace_is_rejected(self):
         response = await self.client.get(
@@ -205,6 +256,37 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
         disabled_tenant = await self.client.get("/students/102/quran-plans", headers=second_headers)
         self.assertEqual(foreign_write.status_code, 404)
         self.assertEqual(disabled_tenant.status_code, 409)
+
+    async def test_attendance_grid_quran_ranges_use_first_and_last_entries_in_period(self):
+        async with self.sessions() as db:
+            first_session = await db.get(Session, 201)
+            first_session.is_confirmed = True
+            db.add(Session(id=203, date=date(2026, 7, 25), tahfiz_id=1, is_confirmed=True))
+            db.add_all([
+                Attendance(session_id=201, student_id=101, tahfiz_id=1, status="حاضر"),
+                Attendance(session_id=203, student_id=101, tahfiz_id=1, status="حاضر"),
+                QuranProgressEntry(
+                    tahfiz_id=1, session_id=201, student_id=101, recorded_by_id=10,
+                    category=ProgressCategory.new_memorization, range_type=QuranRangeType.surah_ayah,
+                    from_surah=2, from_ayah=1, to_surah=2, to_ayah=5, quality_score=4,
+                ),
+                QuranProgressEntry(
+                    tahfiz_id=1, session_id=203, student_id=101, recorded_by_id=10,
+                    category=ProgressCategory.new_memorization, range_type=QuranRangeType.surah_ayah,
+                    from_surah=2, from_ayah=6, to_surah=2, to_ayah=10, quality_score=5,
+                ),
+            ])
+            await db.commit()
+
+        response = await self.client.get(
+            "/reports/attendance-grid?date_from=2026-07-23&date_to=2026-07-25",
+            headers={**self.headers, "X-Tahfiz-ID": "1"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        memorization = response.json()["students"][0]["quran_progress_ranges"]["new_memorization"]
+        self.assertEqual((memorization["first"]["from_surah"], memorization["first"]["from_ayah"]), (2, 1))
+        self.assertEqual((memorization["last"]["to_surah"], memorization["last"]["to_ayah"]), (2, 10))
 
     async def test_invitation_can_be_listed_resent_and_revoked_within_workspace(self):
         headers = {**self.headers, "X-Tahfiz-ID": "1"}

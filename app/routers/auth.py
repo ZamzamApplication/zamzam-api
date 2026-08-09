@@ -31,6 +31,7 @@ from app.models import (
     excused_absence_reset_status_options,
 )
 from app.schemas import (
+    CreateTahfizRequest,
     LoginRequest,
     RefreshTokenRequest,
     RevokeDeviceRequest,
@@ -506,6 +507,56 @@ async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depen
         "message": "Signup request submitted for approval",
         "tahfiz_id": tahfiz.id,
         "status": tahfiz.status.value,
+    }
+
+
+@router.post("/tahfiz", status_code=status.HTTP_201_CREATED)
+async def create_linked_tahfiz(
+    body: CreateTahfizRequest,
+    user: User = Depends(get_current_user_depends),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.role == UserRole.super_admin:
+        raise HTTPException(status_code=409, detail="Platform administrators use support workspaces")
+    pending = await db.scalar(select(Tahfiz.id).where(
+        Tahfiz.owner_user_id == user.id,
+        Tahfiz.status == TahfizStatus.pending,
+    ))
+    if pending:
+        raise HTTPException(status_code=409, detail="You already have a Tahfiz awaiting approval")
+    name = body.name.strip()
+    if len(name) < 2:
+        raise HTTPException(status_code=422, detail="Tahfiz name is required")
+    tahfiz = Tahfiz(
+        name=name,
+        contact_phone=body.contact_phone.strip() or None if body.contact_phone else None,
+        status=TahfizStatus.pending,
+        owner_user_id=user.id,
+    )
+    db.add(tahfiz)
+    await db.flush()
+    membership = UserTahfizMembership(
+        user_id=user.id,
+        tahfiz_id=tahfiz.id,
+        role=UserRole.admin,
+        is_active=True,
+        created_by_id=user.id,
+    )
+    db.add(membership)
+    db.add(AuditLog(
+        actor_user_id=user.id,
+        tahfiz_id=tahfiz.id,
+        action="tahfiz.created",
+        details="Linked to existing user account; awaiting platform approval",
+    ))
+    await db.commit()
+    await db.refresh(membership)
+    return {
+        "message": "Tahfiz request submitted for approval",
+        "tahfiz_id": tahfiz.id,
+        "membership_id": membership.id,
+        "status": tahfiz.status.value,
+        "role": membership.role.value,
     }
 
 
