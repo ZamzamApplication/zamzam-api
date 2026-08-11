@@ -50,6 +50,7 @@ from app.models import (
     User,
     UserRole,
     UserTahfizMembership,
+    absent_status_option,
     attendance_status_options,
     attendance_status_color_options,
     attendance_streak_status_option,
@@ -1540,6 +1541,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "attendance_streak_limit": tahfiz.excused_absence_streak_limit,
         "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "present_status": present_status_option(tahfiz),
+        "absent_status": absent_status_option(tahfiz),
         "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
@@ -1637,6 +1639,9 @@ async def update_tahfiz_settings(
             if (tahfiz.present_status or "").strip() == source:
                 tahfiz.present_status = target
                 changed_fields.append("present_status")
+            if (tahfiz.absent_status or "").strip() == source:
+                tahfiz.absent_status = target
+                changed_fields.append("absent_status")
         if normalized_renames:
             changed_fields.append("attendance_status_renames")
     if body.attendance_streak_alert_enabled is not None and tahfiz.attendance_streak_alert_enabled != body.attendance_streak_alert_enabled:
@@ -1662,6 +1667,13 @@ async def update_tahfiz_settings(
         if (tahfiz.present_status or "").strip() != requested_present_status:
             tahfiz.present_status = requested_present_status
             changed_fields.append("present_status")
+    if body.absent_status is not None:
+        requested_absent_status = body.absent_status.strip()
+        if requested_absent_status not in final_statuses:
+            raise HTTPException(status_code=400, detail="Absent attendance status must be configured")
+        if (tahfiz.absent_status or "").strip() != requested_absent_status:
+            tahfiz.absent_status = requested_absent_status
+            changed_fields.append("absent_status")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),

@@ -41,6 +41,14 @@ def test_attendance_status_renames_are_accepted_in_settings_request():
     assert request.attendance_status_renames == {"غياب": "متغيب"}
 
 
+def test_absent_status_defaults_and_can_be_configured():
+    tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
+    request = UpdateTahfizSettingsRequest(absent_status="متغيب")
+
+    assert serialize_tahfiz(tahfiz)["absent_status"] == "غياب"
+    assert request.absent_status == "متغيب"
+
+
 def test_excel_export_templates_default_for_existing_tahfiz():
     tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
 

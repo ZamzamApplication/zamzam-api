@@ -19,6 +19,7 @@ from app.models import (
     StudentWarning,
     UserRole,
     attendance_status_color_options,
+    absent_status_option,
     attendance_status_options,
     excel_export_template_options,
     present_status_option,
@@ -58,7 +59,7 @@ def attendance_report_metrics(counts, tahfiz) -> dict:
 
     present_status = present_status_option(tahfiz)
     excused_status = status_with_role(AttendanceStatus.excused.value, "amber")
-    absent_status = status_with_role(AttendanceStatus.absent.value, "slate")
+    absent_status = absent_status_option(tahfiz)
     excluded_status = status_with_role(AttendanceStatus.not_applicable.value, "sky")
     applicable_statuses = [status for status in ordered_statuses if status != excluded_status]
     attended_statuses = {status for status in (present_status, excused_status) if status and status in ordered_statuses}
@@ -276,7 +277,7 @@ async def student_streak(
         select(func.count(Attendance.id))
         .where(
             Attendance.student_id == student_id,
-            Attendance.status == AttendanceStatus.absent,
+            Attendance.status == absent_status_option(context.tahfiz),
         )
         .join(Session)
         .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)

@@ -4,6 +4,7 @@ import unittest
 from app.attendance_streaks import calculate_attendance_status_streak
 from app.models import (
     Tahfiz,
+    absent_status_option,
     attendance_status_color_options,
     excused_absence_reset_status_options,
     present_status_option,
@@ -91,3 +92,28 @@ class PresentStatusOptionTests(unittest.TestCase):
             present_status="حاضر",
         )
         self.assertEqual(present_status_option(tahfiz), "عن بعد")
+
+
+class AbsentStatusOptionTests(unittest.TestCase):
+    def test_defaults_to_absent(self):
+        self.assertEqual(absent_status_option(Tahfiz(name="اختبار")), "غياب")
+
+    def test_uses_configured_absent_status(self):
+        tahfiz = Tahfiz(
+            name="اختبار",
+            attendance_statuses=json.dumps(["حاضر", "غير موجود"], ensure_ascii=False),
+            absent_status="غير موجود",
+        )
+
+        self.assertEqual(absent_status_option(tahfiz), "غير موجود")
+
+    def test_falls_back_to_non_present_status(self):
+        tahfiz = Tahfiz(
+            name="اختبار",
+            attendance_statuses=json.dumps(["موجود", "متغيب"], ensure_ascii=False),
+            attendance_status_colors='{"موجود":"green","متغيب":"violet"}',
+            present_status="موجود",
+            absent_status="غياب",
+        )
+
+        self.assertEqual(absent_status_option(tahfiz), "متغيب")

@@ -26,6 +26,7 @@ class AttendanceStatus(str, enum.Enum):
 
 DEFAULT_ATTENDANCE_STATUSES = [status.value for status in AttendanceStatus]
 DEFAULT_PRESENT_STATUS = AttendanceStatus.present.value
+DEFAULT_ABSENT_STATUS = AttendanceStatus.absent.value
 DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
 DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
 DEFAULT_ATTENDANCE_STREAK_STATUS = AttendanceStatus.excused.value
@@ -262,6 +263,21 @@ def present_status_option(tahfiz: "Tahfiz") -> str:
     return statuses[0]
 
 
+def absent_status_option(tahfiz: "Tahfiz") -> str:
+    statuses = attendance_status_options(tahfiz)
+    configured = (getattr(tahfiz, "absent_status", None) or "").strip()
+    if configured in statuses:
+        return configured
+    if DEFAULT_ABSENT_STATUS in statuses:
+        return DEFAULT_ABSENT_STATUS
+    colors = attendance_status_color_options(tahfiz)
+    slate_status = next((status for status in statuses if colors.get(status) == "slate"), None)
+    if slate_status:
+        return slate_status
+    present_status = present_status_option(tahfiz)
+    return next((status for status in statuses if status != present_status), statuses[0])
+
+
 def attendance_status_color_options(tahfiz: "Tahfiz") -> dict[str, str]:
     statuses = attendance_status_options(tahfiz)
     try:
@@ -409,6 +425,11 @@ class Tahfiz(Base):
     present_status: Mapped[str] = mapped_column(
         String(50),
         default=DEFAULT_PRESENT_STATUS,
+        nullable=False,
+    )
+    absent_status: Mapped[str] = mapped_column(
+        String(50),
+        default=DEFAULT_ABSENT_STATUS,
         nullable=False,
     )
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

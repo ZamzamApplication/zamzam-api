@@ -81,6 +81,7 @@ class TahfizOut(BaseModel):
     attendance_streak_limit: int = 3
     attendance_streak_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
     present_status: str = "حاضر"
+    absent_status: str = "غياب"
     attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
@@ -252,7 +253,7 @@ class CreateSessionRequest(BaseModel):
     circle_id: int | None = None  # Legacy cached-client compatibility
     session_date: date
     session_time: time | None = None
-    default_status: str = Field(default="غياب", min_length=1, max_length=100)
+    default_status: str | None = Field(default=None, min_length=1, max_length=100)  # Legacy clients; ignored
 
 
 class UpdateSessionRequest(BaseModel):
@@ -556,6 +557,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_streak_limit: int | None = Field(default=None, ge=1, le=1000)
     attendance_streak_reset_statuses: list[str] | None = None
     present_status: str | None = Field(default=None, min_length=1, max_length=50)
+    absent_status: str | None = Field(default=None, min_length=1, max_length=50)
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = Field(default=None, max_length=500)
