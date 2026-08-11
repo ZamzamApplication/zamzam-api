@@ -256,14 +256,14 @@ async def session_progress(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
-    if not context.tahfiz.progress_tracking_enabled:
-        return {"enabled": False, "entries": [], "previous_entries": [], "suggested_entries": []}
     session = await db.scalar(select(Session).where(
         Session.id == session_id,
         Session.tahfiz_id == context.tahfiz_id,
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if not context.tahfiz.progress_tracking_enabled or not session.quran_progress_enabled:
+        return {"enabled": False, "entries": [], "previous_entries": [], "suggested_entries": []}
     entries = (await db.execute(
         select(QuranProgressEntry)
         .join(Student, Student.id == QuranProgressEntry.student_id)
@@ -332,6 +332,11 @@ async def save_session_progress(
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if not session.quran_progress_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "session_progress_disabled", "reason": "Qur'an progress is disabled for this session"},
+        )
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 

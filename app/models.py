@@ -679,6 +679,7 @@ class Session(Base):
     date: Mapped[date] = mapped_column(Date, nullable=False)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    quran_progress_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reopened_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)

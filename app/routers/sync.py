@@ -300,6 +300,8 @@ async def apply_attendance(
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}
+    if not session.quran_progress_enabled:
+        return {"status": "rejected", "code": "session_progress_disabled"}
     if session.is_confirmed:
         return {"status": "rejected", "code": "session_locked"}
     if status not in attendance_status_options(context.tahfiz):

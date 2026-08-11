@@ -205,6 +205,7 @@ class SessionAttendanceOut(BaseModel):
     session_id: int
     session_date: date
     is_confirmed: bool
+    quran_progress_enabled: bool = True
     sheikh_groups: list[SheikhWithStudents]
 
 
@@ -213,6 +214,7 @@ class SessionOut(BaseModel):
     tahfiz_id: int
     session_date: date
     is_confirmed: bool
+    quran_progress_enabled: bool = True
     created_at: str
 
     class Config:
@@ -255,6 +257,11 @@ class CreateSessionRequest(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     session_date: date
+
+
+class SessionQuranProgressRequest(BaseModel):
+    enabled: bool
+    expected_version: int | None = Field(default=None, ge=0)
 
 
 class ReopenSessionRequest(BaseModel):

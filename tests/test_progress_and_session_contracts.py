@@ -1,14 +1,14 @@
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.models import ProgressCategory, Session, StudentQuranPlan, Tahfiz, TahfizStatus, User, UserRole, WardIncrementUnit
 from app.routers.auth import TenantContext
-from app.routers.progress import ensure_enabled, plan_suggestion, student_progress
-from app.routers.sessions import session_status
-from app.schemas import CreateStudentGoalRequest, QuranProgressItem, StudentQuranPlansRequest
+from app.routers.progress import ensure_enabled, plan_suggestion, session_progress, student_progress
+from app.routers.sessions import session_status, session_summary, update_session_progress_tracking
+from app.schemas import CreateStudentGoalRequest, QuranProgressItem, SessionQuranProgressRequest, StudentQuranPlansRequest
 
 
 def make_context(*, enabled: bool) -> TenantContext:
@@ -26,6 +26,22 @@ def make_context(*, enabled: bool) -> TenantContext:
         progress_tracking_enabled=enabled,
     )
     return TenantContext(user=user, tahfiz=tahfiz)
+
+
+class ScalarSequenceDB:
+    def __init__(self, *values):
+        self.values = iter(values)
+        self.added = []
+        self.commits = 0
+
+    async def scalar(self, _query):
+        return next(self.values)
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def commit(self):
+        self.commits += 1
 
 
 class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
@@ -47,6 +63,18 @@ class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(raised.exception.detail["code"], "progress_tracking_disabled")
+
+    async def test_session_exception_returns_disabled_without_progress_queries(self):
+        session = Session(id=1, tahfiz_id=9, is_confirmed=False, quran_progress_enabled=False)
+
+        response = await session_progress(
+            session_id=1,
+            db=ScalarSequenceDB(session),
+            context=make_context(enabled=True),
+        )
+
+        self.assertFalse(response["enabled"])
+        self.assertEqual(response["entries"], [])
 
 
 class QuranRangeValidationTests(unittest.TestCase):
@@ -171,6 +199,50 @@ class SessionLifecycleTests(unittest.TestCase):
 
         session.is_confirmed = True
         self.assertEqual(session_status(session), "confirmed")
+
+    def test_session_summary_exposes_quran_progress_exception(self):
+        tahfiz = Tahfiz(id=9, name="زمزم", status=TahfizStatus.active)
+        session = Session(
+            id=1,
+            date=date(2026, 8, 11),
+            tahfiz_id=9,
+            is_confirmed=False,
+            quran_progress_enabled=False,
+            version=0,
+        )
+        session.tahfiz = tahfiz
+
+        self.assertFalse(session_summary(session)["quran_progress_enabled"])
+
+    def test_session_quran_toggle_accepts_optimistic_version(self):
+        request = SessionQuranProgressRequest(enabled=False, expected_version=4)
+
+        self.assertFalse(request.enabled)
+        self.assertEqual(request.expected_version, 4)
+
+
+class SessionQuranToggleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabling_session_progress_is_persisted_and_versioned(self):
+        session = Session(
+            id=1,
+            tahfiz_id=9,
+            is_confirmed=False,
+            quran_progress_enabled=True,
+            version=4,
+        )
+        db = ScalarSequenceDB(session, None)
+
+        response = await update_session_progress_tracking(
+            session_id=1,
+            body=SessionQuranProgressRequest(enabled=False, expected_version=4),
+            db=db,
+            context=make_context(enabled=True),
+        )
+
+        self.assertFalse(session.quran_progress_enabled)
+        self.assertEqual(session.version, 5)
+        self.assertEqual(response["version"], 5)
+        self.assertEqual(db.commits, 1)
 
 
 if __name__ == "__main__":

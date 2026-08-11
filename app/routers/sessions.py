@@ -23,7 +23,7 @@ from app.models import (
     attendance_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
-from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, UpdateSessionRequest
+from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, SessionQuranProgressRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -44,6 +44,7 @@ def session_summary(session: Session) -> dict:
         "id": session.id,
         "date": session.date.isoformat(),
         "is_confirmed": session.is_confirmed,
+        "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
         "version": session.version,
         "tahfiz_id": session.tahfiz_id,
@@ -110,7 +111,11 @@ async def create_session(
     if body.default_status not in attendance_status_options(context.tahfiz):
         raise HTTPException(status_code=400, detail=f"Invalid default status")
 
-    session = Session(date=body.session_date, tahfiz_id=context.tahfiz_id)
+    session = Session(
+        date=body.session_date,
+        tahfiz_id=context.tahfiz_id,
+        quran_progress_enabled=context.tahfiz.progress_tracking_enabled,
+    )
     db.add(session)
     await db.flush()
 
@@ -159,7 +164,13 @@ async def create_session(
 
     await db.commit()
     await db.refresh(session)
-    return {"id": session.id, "date": session.date.isoformat(), "tahfiz_id": session.tahfiz_id, "circle_id": session.tahfiz_id}
+    return {
+        "id": session.id,
+        "date": session.date.isoformat(),
+        "quran_progress_enabled": session.quran_progress_enabled,
+        "tahfiz_id": session.tahfiz_id,
+        "circle_id": session.tahfiz_id,
+    }
 
 
 @router.put("/{session_id}")
@@ -303,6 +314,7 @@ async def get_session_attendance(
         "session_id": session.id,
         "date": session.date.isoformat(),
         "is_confirmed": session.is_confirmed,
+        "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
         "version": session.version,
         "tahfiz_id": session.tahfiz_id,
@@ -311,6 +323,56 @@ async def get_session_attendance(
         "circle_name": session.tahfiz.name,
         "sheikh_groups": sheikh_groups,
         "circle_sheikhs": circle_sheikhs_list,
+    }
+
+
+@router.put("/{session_id}/progress-tracking")
+async def update_session_progress_tracking(
+    session_id: int,
+    body: SessionQuranProgressRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    session = await db.scalar(select(Session).where(
+        Session.id == session_id,
+        Session.tahfiz_id == context.tahfiz_id,
+    ))
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.is_confirmed:
+        raise HTTPException(status_code=409, detail="Confirmed sessions must be reopened before changing Quran progress")
+    if body.expected_version is not None and session.version != body.expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "session_version_conflict", "current_version": session.version},
+        )
+    if not body.enabled:
+        has_progress = await db.scalar(select(QuranProgressEntry.id).where(
+            QuranProgressEntry.session_id == session_id,
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+        ).limit(1))
+        if has_progress is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "session_progress_exists",
+                    "reason": "لا يمكن إيقاف المتابعة بعد حفظ مقدار قرآن في هذه الحلقة",
+                },
+            )
+    if session.quran_progress_enabled != body.enabled:
+        session.quran_progress_enabled = body.enabled
+        session.version += 1
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="session.quran_progress_toggled",
+            details=f"session={session.id}; enabled={str(body.enabled).lower()}",
+        ))
+        await db.commit()
+    return {
+        "session_id": session.id,
+        "quran_progress_enabled": session.quran_progress_enabled,
+        "version": session.version,
     }
 
 
