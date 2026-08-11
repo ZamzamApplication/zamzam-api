@@ -489,7 +489,7 @@ class ExcelExportColumnSettings(BaseModel):
     enabled: bool = True
     custom: bool = False
     width: int = Field(default=18, ge=1, le=60)
-    header_font_family: str = Field(default="Arial", min_length=1, max_length=80)
+    header_font_size: int = Field(default=12, ge=6, le=72)
     show_header: bool = True
     subcolumns: list[ExcelExportSubcolumnSettings] = Field(default_factory=list, max_length=10)
 

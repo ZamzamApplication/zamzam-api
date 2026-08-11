@@ -51,7 +51,7 @@ def test_excel_export_template_columns_are_validated():
     request = UpdateTahfizSettingsRequest(excel_export_templates=DEFAULT_EXCEL_EXPORT_TEMPLATES)
 
     assert request.excel_export_templates["attendance"].columns[0].id == "serial"
-    assert request.excel_export_templates["attendance"].columns[0].header_font_family == "Arial"
+    assert request.excel_export_templates["attendance"].columns[0].header_font_size == 12
     memorization = next(column for column in request.excel_export_templates["attendance"].columns if column.id == "memorization")
     assert [subcolumn.id for subcolumn in memorization.subcolumns] == ["from", "to"]
     assert request.excel_export_templates["attendance"].header_font_family == "Arial"
@@ -137,4 +137,4 @@ def test_legacy_quran_custom_columns_are_promoted_without_duplicates():
 
     assert [column["id"] for column in columns].count("memorization") == 1
     assert [column["id"] for column in columns].count("revision") == 1
-    assert next(column for column in columns if column["id"] == "memorization")["header_font_family"] == "Arial"
+    assert next(column for column in columns if column["id"] == "memorization")["header_font_size"] == 12

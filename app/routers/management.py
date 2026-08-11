@@ -1705,12 +1705,10 @@ async def update_tahfiz_settings(
             for column in template["columns"]:
                 column_id = column["id"].strip()
                 label = column["label"].strip()
-                column_header_font_family = column["header_font_family"].strip()
                 is_custom = column["custom"]
                 semantic_subcolumns = template_key == "attendance" and column_id in {"memorization", "revision"}
                 if (
                     not label
-                    or not column_header_font_family
                     or column_id in seen_ids
                     or (is_custom and not column_id.startswith("custom_"))
                     or (not is_custom and column_id not in allowed_standard_ids)
@@ -1738,7 +1736,7 @@ async def update_tahfiz_settings(
                     "enabled": column["enabled"],
                     "custom": is_custom,
                     "width": column["width"],
-                    "header_font_family": column_header_font_family,
+                    "header_font_size": column["header_font_size"],
                     "show_header": column["show_header"],
                     "subcolumns": normalized_subcolumns,
                 })

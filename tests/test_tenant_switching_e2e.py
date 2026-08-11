@@ -140,12 +140,12 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(membership.role, UserRole.admin)
             self.assertEqual(user.default_tahfiz_id, 1)
 
-    async def test_excel_quran_columns_and_per_header_fonts_can_be_saved(self):
+    async def test_excel_quran_columns_and_per_header_sizes_can_be_saved(self):
         headers = {**self.headers, "X-Tahfiz-ID": "1"}
         current = await self.client.get("/tahfiz/settings", headers=headers)
         templates = current.json()["excel_export_templates"]
         memorization = next(column for column in templates["attendance"]["columns"] if column["id"] == "memorization")
-        memorization["header_font_family"] = "Amiri"
+        memorization["header_font_size"] = 19
 
         response = await self.client.put(
             "/tahfiz/settings",
@@ -155,7 +155,7 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         saved = next(column for column in response.json()["excel_export_templates"]["attendance"]["columns"] if column["id"] == "memorization")
-        self.assertEqual(saved["header_font_family"], "Amiri")
+        self.assertEqual(saved["header_font_size"], 19)
         self.assertEqual([item["id"] for item in saved["subcolumns"]], ["from", "to"])
 
     async def test_unknown_workspace_is_rejected(self):

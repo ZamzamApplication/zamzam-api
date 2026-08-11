@@ -62,13 +62,13 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
-            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_family": "Arial"},
-            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_family": "Arial"},
-            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20, "header_font_family": "Arial"},
-            {"id": "subscription_amount", "label": "مبلغ الاشتراك", "enabled": True, "custom": False, "width": 16, "header_font_family": "Arial"},
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_size": 12},
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_size": 12},
+            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20, "header_font_size": 12},
+            {"id": "subscription_amount", "label": "مبلغ الاشتراك", "enabled": True, "custom": False, "width": 16, "header_font_size": 12},
             {
                 "id": "memorization", "label": "الحفظ", "enabled": True, "custom": False,
-                "width": 18, "header_font_family": "Arial",
+                "width": 18, "header_font_size": 12,
                 "subcolumns": [
                     {"id": "from", "label": "من", "width": 18},
                     {"id": "to", "label": "إلى", "width": 18},
@@ -76,13 +76,13 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
             },
             {
                 "id": "revision", "label": "المراجعة", "enabled": True, "custom": False,
-                "width": 18, "header_font_family": "Arial",
+                "width": 18, "header_font_size": 12,
                 "subcolumns": [
                     {"id": "from", "label": "من", "width": 18},
                     {"id": "to", "label": "إلى", "width": 18},
                 ],
             },
-            {"id": "attendance", "label": "الحضور", "enabled": True, "custom": False, "width": 18, "header_font_family": "Arial"},
+            {"id": "attendance", "label": "الحضور", "enabled": True, "custom": False, "width": 18, "header_font_size": 12},
         ],
     },
     "statistics": {
@@ -101,12 +101,12 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
-            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_family": "Arial"},
-            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_family": "Arial"},
-            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20, "header_font_family": "Arial"},
-            {"id": "sessions", "label": "إجمالي الحلقات", "enabled": True, "custom": False, "width": 16, "header_font_family": "Arial"},
-            {"id": "statuses", "label": "حالات الحضور", "enabled": True, "custom": False, "width": 14, "header_font_family": "Arial"},
-            {"id": "rate", "label": "نسبة الحضور", "enabled": True, "custom": False, "width": 16, "header_font_family": "Arial"},
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_size": 12},
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_size": 12},
+            {"id": "sheikh", "label": "الشيخ", "enabled": True, "custom": False, "width": 20, "header_font_size": 12},
+            {"id": "sessions", "label": "إجمالي الحلقات", "enabled": True, "custom": False, "width": 16, "header_font_size": 12},
+            {"id": "statuses", "label": "حالات الحضور", "enabled": True, "custom": False, "width": 14, "header_font_size": 12},
+            {"id": "rate", "label": "نسبة الحضور", "enabled": True, "custom": False, "width": 16, "header_font_size": 12},
         ],
     },
     "progress": {
@@ -125,12 +125,12 @@ DEFAULT_EXCEL_EXPORT_TEMPLATES = {
         "date_font_color": "#000000",
         "attendance_date_format": "weekday_day_month_year",
         "columns": [
-            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_family": "Arial"},
-            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_family": "Arial"},
-            {"id": "entries", "label": "عدد سجلات المتابعة", "enabled": True, "custom": False, "width": 20, "header_font_family": "Arial"},
-            {"id": "quality", "label": "متوسط التقييم", "enabled": True, "custom": False, "width": 18, "header_font_family": "Arial"},
-            {"id": "mistakes", "label": "إجمالي الأخطاء", "enabled": True, "custom": False, "width": 18, "header_font_family": "Arial"},
-            {"id": "latestRange", "label": "آخر مقدار", "enabled": True, "custom": False, "width": 28, "header_font_family": "Arial"},
+            {"id": "serial", "label": "م", "enabled": False, "custom": False, "width": 6, "header_font_size": 12},
+            {"id": "student", "label": "الطالب", "enabled": True, "custom": False, "width": 24, "header_font_size": 12},
+            {"id": "entries", "label": "عدد سجلات المتابعة", "enabled": True, "custom": False, "width": 20, "header_font_size": 12},
+            {"id": "quality", "label": "متوسط التقييم", "enabled": True, "custom": False, "width": 18, "header_font_size": 12},
+            {"id": "mistakes", "label": "إجمالي الأخطاء", "enabled": True, "custom": False, "width": 18, "header_font_size": 12},
+            {"id": "latestRange", "label": "آخر مقدار", "enabled": True, "custom": False, "width": 28, "header_font_size": 12},
         ],
     },
 }
@@ -181,10 +181,12 @@ def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
                     {**subcolumns[0], "id": "from", "label": "من"},
                     {**subcolumns[1], "id": "to", "label": "إلى"},
                 ]
-        fallback_header_font = str(template.get("header_font_family") or default["header_font_family"])
+        fallback_header_size = int(template.get("header_font_size") or default["header_font_size"])
         for column in template["columns"]:
-            if isinstance(column, dict) and not str(column.get("header_font_family") or "").strip():
-                column["header_font_family"] = fallback_header_font
+            if isinstance(column, dict):
+                column.pop("header_font_family", None)
+                if not isinstance(column.get("header_font_size"), int):
+                    column["header_font_size"] = fallback_header_size
         configured_ids = {
             column.get("id")
             for column in template["columns"]
