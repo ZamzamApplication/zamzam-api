@@ -5,17 +5,17 @@ from app.routers.management import serialize_tahfiz
 from app.schemas import UpdateTahfizSettingsRequest
 
 
-def test_attendance_sheikh_selector_defaults_to_enabled():
+def test_attendance_sheikh_selector_defaults_to_disabled_for_new_tahfiz():
     column = Tahfiz.__table__.c.attendance_sheikh_selection_enabled
     tahfiz = Tahfiz(
         id=1,
         name="اختبار",
         status=TahfizStatus.active,
-        attendance_sheikh_selection_enabled=True,
+        attendance_sheikh_selection_enabled=False,
     )
 
-    assert column.default.arg is True
-    assert serialize_tahfiz(tahfiz)["attendance_sheikh_selection_enabled"] is True
+    assert column.default.arg is False
+    assert serialize_tahfiz(tahfiz)["attendance_sheikh_selection_enabled"] is False
 
 
 def test_attendance_sheikh_selector_can_be_disabled_in_settings_request():

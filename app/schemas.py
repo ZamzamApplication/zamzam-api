@@ -109,7 +109,7 @@ class TahfizOut(BaseModel):
     excused_absence_streak_limit: int = 3
     excused_absence_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
     attendance_streak_alert_enabled: bool = True
-    attendance_sheikh_selection_enabled: bool = True
+    attendance_sheikh_selection_enabled: bool = False
     restrict_sheikh_student_access: bool = True
     attendance_streak_status: str = "غياب بعذر"
     attendance_streak_limit: int = 3

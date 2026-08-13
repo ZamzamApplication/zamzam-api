@@ -63,6 +63,7 @@ def initial_tahfiz_settings(body: SignupRequest | CreateTahfizRequest) -> dict:
         "present_status": body.present_status,
         "absent_status": body.absent_status,
         "attendance_streak_status": body.absent_status,
+        "attendance_sheikh_selection_enabled": False,
         "excused_absence_reset_statuses": json.dumps([body.present_status], ensure_ascii=False),
         "session_name_options": json.dumps(body.session_name_options, ensure_ascii=False),
         "subscriptions_enabled": body.subscriptions_enabled,
