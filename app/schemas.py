@@ -82,6 +82,7 @@ class TahfizOut(BaseModel):
     attendance_streak_reset_statuses: list[str] = Field(default_factory=lambda: ["حاضر"])
     present_status: str = "حاضر"
     absent_status: str = "غياب"
+    multiple_sessions_per_day_enabled: bool = False
     attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
@@ -253,11 +254,43 @@ class CreateSessionRequest(BaseModel):
     circle_id: int | None = None  # Legacy cached-client compatibility
     session_date: date
     session_time: time | None = None
+    name: str | None = Field(default=None, max_length=100)
+    student_ids: list[int] | None = Field(default=None, min_length=1, max_length=1000)
     default_status: str | None = Field(default=None, min_length=1, max_length=100)  # Legacy clients; ignored
+
+    @field_validator("name")
+    @classmethod
+    def normalize_session_name(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+    @field_validator("student_ids")
+    @classmethod
+    def unique_session_students(cls, values: list[int] | None) -> list[int] | None:
+        if values is not None and len(values) != len(set(values)):
+            raise ValueError("Each student may only appear once in a session")
+        return values
 
 
 class UpdateSessionRequest(BaseModel):
     session_date: date
+    name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_updated_session_name(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class UpdateSessionMembershipRequest(BaseModel):
+    student_ids: list[int] = Field(min_length=1, max_length=1000)
+    expected_version: int | None = Field(default=None, ge=0)
+
+    @field_validator("student_ids")
+    @classmethod
+    def unique_members(cls, values: list[int]) -> list[int]:
+        if len(values) != len(set(values)):
+            raise ValueError("Each student may only appear once in a session")
+        return values
 
 
 class SessionQuranProgressRequest(BaseModel):
@@ -291,6 +324,14 @@ class CreateStudentRequest(BaseModel):
     registration_date: date | None = None
     sheikh_id: int | None = None
     parent_phones: list[CreateParentPhone] = Field(default_factory=list, max_length=20)
+    category_ids: list[int] = Field(default_factory=list, max_length=100)
+
+    @field_validator("category_ids")
+    @classmethod
+    def unique_create_categories(cls, values: list[int]) -> list[int]:
+        if len(values) != len(set(values)):
+            raise ValueError("Each category may only appear once")
+        return values
 
 
 class CreateWarningRequest(BaseModel):
@@ -452,6 +493,26 @@ class UpdateStudentRequest(BaseModel):
     registration_date: date | None = None
     sheikh_id: int | None = None
     parent_phones: list[UpdateParentPhone] | None = Field(default=None, max_length=20)
+    category_ids: list[int] | None = Field(default=None, max_length=100)
+
+    @field_validator("category_ids")
+    @classmethod
+    def unique_update_categories(cls, values: list[int] | None) -> list[int] | None:
+        if values is not None and len(values) != len(set(values)):
+            raise ValueError("Each category may only appear once")
+        return values
+
+
+class StudentCategoryRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Category name is required")
+        return normalized
 
 
 class PlatformTahfizActionRequest(BaseModel):
@@ -558,6 +619,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     attendance_streak_reset_statuses: list[str] | None = None
     present_status: str | None = Field(default=None, min_length=1, max_length=50)
     absent_status: str | None = Field(default=None, min_length=1, max_length=50)
+    multiple_sessions_per_day_enabled: bool | None = None
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = Field(default=None, max_length=500)

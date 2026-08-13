@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete as sa_delete, false, select, update as sa_update
+from sqlalchemy import delete as sa_delete, false, func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,11 +19,12 @@ from app.models import (
     Session,
     Sheikh,
     Student,
+    StudentQuranPlan,
     StudentStatus,
     absent_status_option,
 )
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
-from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, SessionQuranProgressRequest, UpdateSessionRequest
+from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, SessionQuranProgressRequest, UpdateSessionMembershipRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -36,6 +37,8 @@ def session_status(session: Session) -> str:
 
 def student_is_in_session(session: Session, attendance: Attendance | None) -> bool:
     """Use persisted attendance as the membership snapshot once confirmed."""
+    if session.explicit_membership:
+        return attendance is not None
     return not session.is_confirmed or attendance is not None
 
 
@@ -43,6 +46,10 @@ def session_summary(session: Session) -> dict:
     return {
         "id": session.id,
         "date": session.date.isoformat(),
+        "name": session.name,
+        "daily_sequence": session.daily_sequence,
+        "explicit_membership": session.explicit_membership,
+        "student_count": len(session.attendance_records),
         "is_confirmed": session.is_confirmed,
         "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
@@ -61,9 +68,9 @@ async def get_all_sessions(
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.tahfiz))
+        .options(selectinload(Session.tahfiz), selectinload(Session.attendance_records))
         .where(Session.tahfiz_id == context.tahfiz_id)
-        .order_by(Session.date.desc())
+        .order_by(Session.date.desc(), Session.daily_sequence.desc(), Session.id.desc())
     )
     result = await db.execute(query)
     sessions = result.scalars().all()
@@ -77,9 +84,9 @@ async def get_past_sessions(
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.tahfiz))
+        .options(selectinload(Session.tahfiz), selectinload(Session.attendance_records))
         .where(Session.is_confirmed == True, Session.tahfiz_id == context.tahfiz_id)
-        .order_by(Session.date.desc())
+        .order_by(Session.date.desc(), Session.daily_sequence.desc(), Session.id.desc())
     )
     result = await db.execute(query)
     sessions = result.scalars().all()
@@ -93,9 +100,9 @@ async def get_upcoming_sessions(
 ):
     query = (
         select(Session)
-        .options(selectinload(Session.tahfiz))
+        .options(selectinload(Session.tahfiz), selectinload(Session.attendance_records))
         .where(Session.is_confirmed == False, Session.tahfiz_id == context.tahfiz_id)
-        .order_by(Session.date)
+        .order_by(Session.date, Session.daily_sequence, Session.id)
     )
     result = await db.execute(query)
     sessions = result.scalars().all()
@@ -108,8 +115,31 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
+    multiple_enabled = context.tahfiz.multiple_sessions_per_day_enabled
+    if not multiple_enabled:
+        duplicate = await db.scalar(select(Session.id).where(
+            Session.tahfiz_id == context.tahfiz_id,
+            Session.date == body.session_date,
+        ).limit(1))
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail={
+                "code": "session_date_exists",
+                "message": "توجد حلقة بالفعل في هذا التاريخ. فعّل خيار تعدد الحلقات اليومية لإنشاء حلقة أخرى.",
+            })
+        if body.student_ids is not None:
+            raise HTTPException(status_code=400, detail={"code": "multiple_sessions_disabled"})
+    elif body.student_ids is None:
+        raise HTTPException(status_code=422, detail={"code": "session_students_required"})
+
+    daily_sequence = int(await db.scalar(select(func.coalesce(func.max(Session.daily_sequence), 0)).where(
+        Session.tahfiz_id == context.tahfiz_id,
+        Session.date == body.session_date,
+    )) or 0) + 1
     session = Session(
         date=body.session_date,
+        name=body.name,
+        daily_sequence=daily_sequence,
+        explicit_membership=multiple_enabled,
         tahfiz_id=context.tahfiz_id,
         quran_progress_enabled=context.tahfiz.progress_tracking_enabled,
     )
@@ -122,9 +152,12 @@ async def create_session(
         .where(
             Sheikh.tahfiz_id == context.tahfiz_id,
             Student.status == StudentStatus.enrolled,
+            *([Student.id.in_(body.student_ids)] if multiple_enabled else []),
         )
     )
     students = result.scalars().all()
+    if multiple_enabled and {student.id for student in students} != set(body.student_ids or []):
+        raise HTTPException(status_code=404, detail="One or more selected students were not found")
 
     session_weekday = body.session_date.weekday()  # 0=Mon ... 6=Sun
     # Python weekday(): Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
@@ -164,6 +197,10 @@ async def create_session(
     return {
         "id": session.id,
         "date": session.date.isoformat(),
+        "name": session.name,
+        "daily_sequence": session.daily_sequence,
+        "explicit_membership": session.explicit_membership,
+        "student_count": len(students),
         "quran_progress_enabled": session.quran_progress_enabled,
         "tahfiz_id": session.tahfiz_id,
         "circle_id": session.tahfiz_id,
@@ -184,7 +221,30 @@ async def update_session(
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions must be reopened before changing the date")
 
-    session.date = body.session_date
+    if session.date != body.session_date:
+        if not context.tahfiz.multiple_sessions_per_day_enabled and not session.explicit_membership:
+            duplicate = await db.scalar(select(Session.id).where(
+                Session.tahfiz_id == context.tahfiz_id,
+                Session.date == body.session_date,
+                Session.id != session.id,
+            ).limit(1))
+            if duplicate is not None:
+                raise HTTPException(status_code=409, detail={
+                    "code": "session_date_exists",
+                    "message": "توجد حلقة بالفعل في هذا التاريخ.",
+                })
+        session.daily_sequence = int(await db.scalar(select(func.coalesce(func.max(Session.daily_sequence), 0)).where(
+            Session.tahfiz_id == context.tahfiz_id,
+            Session.date == body.session_date,
+            Session.id != session.id,
+        )) or 0) + 1
+        session.date = body.session_date
+        await db.execute(sa_update(StudentQuranPlan).where(
+            StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+            StudentQuranPlan.last_advanced_session_id == session.id,
+        ).values(last_advanced_on=body.session_date, updated_at=utcnow()))
+    if "name" in body.model_fields_set:
+        session.name = body.name
     session.version += 1
     db.add(AuditLog(
         actor_user_id=context.user.id,
@@ -193,7 +253,13 @@ async def update_session(
         details=f"session={session.id}; date={body.session_date.isoformat()}",
     ))
     await db.commit()
-    return {"id": session.id, "date": session.date.isoformat(), "version": session.version}
+    return {
+        "id": session.id,
+        "date": session.date.isoformat(),
+        "name": session.name,
+        "daily_sequence": session.daily_sequence,
+        "version": session.version,
+    }
 
 
 @router.get("/{session_id}/attendance")
@@ -310,6 +376,10 @@ async def get_session_attendance(
     return {
         "session_id": session.id,
         "date": session.date.isoformat(),
+        "name": session.name,
+        "daily_sequence": session.daily_sequence,
+        "explicit_membership": session.explicit_membership,
+        "student_count": sum(len(group["students"]) for group in sheikh_groups),
         "is_confirmed": session.is_confirmed,
         "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
@@ -320,6 +390,109 @@ async def get_session_attendance(
         "circle_name": session.tahfiz.name,
         "sheikh_groups": sheikh_groups,
         "circle_sheikhs": circle_sheikhs_list,
+    }
+
+
+@router.put("/{session_id}/membership")
+async def update_session_membership(
+    session_id: int,
+    body: UpdateSessionMembershipRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    session = await db.scalar(select(Session).where(
+        Session.id == session_id,
+        Session.tahfiz_id == context.tahfiz_id,
+    ))
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not session.explicit_membership:
+        raise HTTPException(status_code=409, detail={"code": "session_membership_not_selective"})
+    if session.is_confirmed:
+        raise HTTPException(status_code=409, detail="Confirmed sessions must be reopened before changing membership")
+    if body.expected_version is not None and session.version != body.expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "session_version_conflict", "current_version": session.version},
+        )
+
+    requested_ids = set(body.student_ids)
+    students = (await db.execute(
+        select(Student)
+        .join(Sheikh)
+        .where(
+            Sheikh.tahfiz_id == context.tahfiz_id,
+            Student.status == StudentStatus.enrolled,
+            Student.id.in_(requested_ids),
+        )
+    )).scalars().all()
+    if {student.id for student in students} != requested_ids:
+        raise HTTPException(status_code=404, detail="One or more selected students were not found")
+
+    existing_rows = (await db.execute(select(Attendance).where(
+        Attendance.session_id == session_id,
+        Attendance.tahfiz_id == context.tahfiz_id,
+    ))).scalars().all()
+    existing_by_student = {row.student_id: row for row in existing_rows if row.student_id is not None}
+    removed_ids = set(existing_by_student) - requested_ids
+    if removed_ids:
+        progress_student = await db.scalar(select(QuranProgressEntry.student_id).where(
+            QuranProgressEntry.session_id == session_id,
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+            QuranProgressEntry.student_id.in_(removed_ids),
+        ).limit(1))
+        if progress_student is not None:
+            raise HTTPException(status_code=409, detail={
+                "code": "session_member_has_quran_progress",
+                "student_id": progress_student,
+                "message": "لا يمكن حذف الطالب من الحلقة لأن له مقدار قرآن محفوظاً فيها. امسح المقدار أولاً.",
+            })
+        await db.execute(sa_delete(Attendance).where(
+            Attendance.session_id == session_id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+            Attendance.student_id.in_(removed_ids),
+        ))
+
+    added = [student for student in students if student.id not in existing_by_student]
+    weekday_local = (session.date.weekday() + 1) % 7
+    added_ids = [student.id for student in added]
+    excused_rows = (await db.execute(select(ExcusedWeekday).where(
+        ExcusedWeekday.student_id.in_(added_ids),
+        ExcusedWeekday.weekday == weekday_local,
+    ))).scalars().all() if added_ids else []
+    excused_by_student = {row.student_id: row for row in excused_rows}
+    period_by_student = await periods_on_date(db, context.tahfiz_id, added_ids, session.date)
+    for student in added:
+        status, notes = automatic_attendance(
+            context.tahfiz,
+            student,
+            session.date,
+            absent_status_option(context.tahfiz),
+            period=period_by_student.get(student.id),
+            weekday=excused_by_student.get(student.id),
+        )
+        db.add(Attendance(
+            session_id=session_id,
+            student_id=student.id,
+            tahfiz_id=context.tahfiz_id,
+            status=status,
+            notes=notes,
+        ))
+
+    if added or removed_ids:
+        session.version += 1
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="session.membership_updated",
+            details=f"session={session.id}; added={len(added)}; removed={len(removed_ids)}; version={session.version}",
+        ))
+        await db.commit()
+    return {
+        "session_id": session.id,
+        "student_ids": sorted(requested_ids),
+        "student_count": len(requested_ids),
+        "version": session.version,
     }
 
 
@@ -438,7 +611,7 @@ async def confirm_session(
     session_weekday = session.date.weekday()
     weekday_local = (session_weekday + 1) % 7
 
-    missing = all_student_ids - with_records
+    missing = set() if session.explicit_membership else all_student_ids - with_records
     excused_rows = (await db.execute(
         select(ExcusedWeekday).where(
             ExcusedWeekday.student_id.in_(missing),

@@ -211,6 +211,14 @@ async def batch_attendance(
     )).scalars().all())
     if valid_student_ids != student_ids:
         raise HTTPException(status_code=404, detail="One or more students were not found")
+    if session.explicit_membership:
+        member_ids = set((await db.execute(select(Attendance.student_id).where(
+            Attendance.session_id == body.session_id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+            Attendance.student_id.in_(student_ids),
+        ))).scalars().all())
+        if member_ids != student_ids:
+            raise HTTPException(status_code=404, detail="One or more students are not members of this session")
 
     sheikh_ids = {item.sheikh_id for item in body.updates if item.sheikh_id is not None}
     if sheikh_ids:

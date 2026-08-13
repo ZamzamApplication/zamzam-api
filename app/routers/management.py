@@ -39,6 +39,8 @@ from app.models import (
     Session,
     Sheikh,
     Student,
+    StudentCategory,
+    StudentCategoryMembership,
     StudentExcusedPeriod,
     StudentGoal,
     StudentQuranPlan,
@@ -68,6 +70,7 @@ from app.schemas import (
     CreateExcusedPeriodRequest,
     CreateSheikhRequest,
     CreateStudentRequest,
+    StudentCategoryRequest,
     CreateUserRequest,
     CreateWarningRequest,
     DeleteSheikhRequest,
@@ -94,6 +97,138 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_PROFILE_UPLOAD_BYTES = 10 * 1024 * 1024
 PROFILE_IMAGE_SIZE = (512, 512)
 PROFILE_IMAGE_QUALITY = 82
+
+
+def serialize_student_categories(student: Student) -> list[dict]:
+    return [
+        {"id": membership.category.id, "name": membership.category.name}
+        for membership in sorted(student.category_memberships, key=lambda row: (row.category.name, row.category.id))
+    ]
+
+
+async def set_student_categories(
+    db: AsyncSession,
+    tahfiz_id: int,
+    student_id: int,
+    category_ids: list[int],
+) -> None:
+    requested = set(category_ids)
+    valid = set((await db.execute(select(StudentCategory.id).where(
+        StudentCategory.tahfiz_id == tahfiz_id,
+        StudentCategory.id.in_(requested),
+    ))).scalars().all()) if requested else set()
+    if valid != requested:
+        raise HTTPException(status_code=404, detail="One or more student categories were not found")
+    await db.execute(sa_delete(StudentCategoryMembership).where(
+        StudentCategoryMembership.tahfiz_id == tahfiz_id,
+        StudentCategoryMembership.student_id == student_id,
+    ))
+    for category_id in category_ids:
+        db.add(StudentCategoryMembership(
+            tahfiz_id=tahfiz_id,
+            category_id=category_id,
+            student_id=student_id,
+        ))
+
+
+@router.get("/student-categories")
+async def list_student_categories(
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    rows = (await db.execute(select(StudentCategory).where(
+        StudentCategory.tahfiz_id == context.tahfiz_id,
+    ).order_by(StudentCategory.name, StudentCategory.id))).scalars().all()
+    counts = dict((await db.execute(
+        select(StudentCategoryMembership.category_id, func.count(StudentCategoryMembership.id))
+        .where(StudentCategoryMembership.tahfiz_id == context.tahfiz_id)
+        .group_by(StudentCategoryMembership.category_id)
+    )).all())
+    return [{"id": row.id, "name": row.name, "student_count": counts.get(row.id, 0)} for row in rows]
+
+
+@router.post("/student-categories", status_code=201)
+async def create_student_category(
+    body: StudentCategoryRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    existing = await db.scalar(select(StudentCategory.id).where(
+        StudentCategory.tahfiz_id == context.tahfiz_id,
+        StudentCategory.name == body.name,
+    ))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail={"code": "student_category_name_exists"})
+    category = StudentCategory(tahfiz_id=context.tahfiz_id, name=body.name)
+    db.add(category)
+    await db.flush()
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student_category.created",
+        details=f"category={category.id}; name={category.name}",
+    ))
+    await db.commit()
+    return {"id": category.id, "name": category.name, "student_count": 0}
+
+
+@router.put("/student-categories/{category_id}")
+async def update_student_category(
+    category_id: int,
+    body: StudentCategoryRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    category = await db.scalar(select(StudentCategory).where(
+        StudentCategory.id == category_id,
+        StudentCategory.tahfiz_id == context.tahfiz_id,
+    ))
+    if not category:
+        raise HTTPException(status_code=404, detail="Student category not found")
+    duplicate = await db.scalar(select(StudentCategory.id).where(
+        StudentCategory.tahfiz_id == context.tahfiz_id,
+        StudentCategory.name == body.name,
+        StudentCategory.id != category_id,
+    ))
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail={"code": "student_category_name_exists"})
+    previous = category.name
+    category.name = body.name
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student_category.updated",
+        details=f"category={category.id}; from={previous}; to={category.name}",
+    ))
+    await db.commit()
+    return {"id": category.id, "name": category.name}
+
+
+@router.delete("/student-categories/{category_id}")
+async def delete_student_category(
+    category_id: int,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    category = await db.scalar(select(StudentCategory).where(
+        StudentCategory.id == category_id,
+        StudentCategory.tahfiz_id == context.tahfiz_id,
+    ))
+    if not category:
+        raise HTTPException(status_code=404, detail="Student category not found")
+    await db.execute(sa_delete(StudentCategoryMembership).where(
+        StudentCategoryMembership.tahfiz_id == context.tahfiz_id,
+        StudentCategoryMembership.category_id == category_id,
+    ))
+    await db.delete(category)
+    db.add(AuditLog(
+        actor_user_id=context.user.id,
+        tahfiz_id=context.tahfiz_id,
+        action="student_category.deleted",
+        details=f"category={category_id}; name={category.name}",
+    ))
+    await db.commit()
+    return {"message": "Student category deleted"}
 
 
 def serialize_excused_period(period: StudentExcusedPeriod) -> dict:
@@ -614,6 +749,7 @@ async def get_sheikh_students(
         .options(
             selectinload(Student.parent_phones),
             selectinload(Student.warnings),
+            selectinload(Student.category_memberships).selectinload(StudentCategoryMembership.category),
         )
         .where(
             Student.sheikh_id == sheikh_id,
@@ -651,6 +787,8 @@ async def get_sheikh_students(
                 for p in r.parent_phones
             ],
             "excused_weekdays": ew_map.get(r.id, []),
+            "categories": serialize_student_categories(r),
+            "category_ids": [item["id"] for item in serialize_student_categories(r)],
         }
         for r in records
     ]
@@ -692,6 +830,7 @@ async def list_students(
             selectinload(Student.sheikh),
             selectinload(Student.parent_phones),
             selectinload(Student.warnings),
+            selectinload(Student.category_memberships).selectinload(StudentCategoryMembership.category),
         )
         .where(Student.tahfiz_id == context.tahfiz_id)
         .order_by(Student.name)
@@ -727,6 +866,8 @@ async def list_students(
                 for p in s.parent_phones
             ],
             "excused_weekdays": ew_map.get(s.id, []),
+            "categories": serialize_student_categories(s),
+            "category_ids": [item["id"] for item in serialize_student_categories(s)],
         }
         for s in students
     ]
@@ -743,6 +884,7 @@ async def student_profile(
         .options(
             selectinload(Student.sheikh),
             selectinload(Student.parent_phones),
+            selectinload(Student.category_memberships).selectinload(StudentCategoryMembership.category),
             selectinload(Student.warnings),
             selectinload(Student.excused_weekdays),
             selectinload(Student.excused_periods),
@@ -804,6 +946,8 @@ async def student_profile(
             }
             for phone in student.parent_phones
         ],
+        "categories": serialize_student_categories(student),
+        "category_ids": [item["id"] for item in serialize_student_categories(student)],
         "excused_weekdays": [
             {"id": row.id, "weekday": row.weekday, "note": row.note}
             for row in sorted(student.excused_weekdays, key=lambda row: row.weekday)
@@ -867,6 +1011,7 @@ async def create_student(
     )
     db.add(student)
     await db.flush()
+    await set_student_categories(db, context.tahfiz_id, student.id, body.category_ids)
 
     for pp in body.parent_phones:
         if pp.parent_type not in [t.value for t in ParentType]:
@@ -898,6 +1043,7 @@ async def update_student(
         select(Student)
         .options(
             selectinload(Student.parent_phones),
+            selectinload(Student.category_memberships),
         )
         .where(Student.id == student_id, Student.tahfiz_id == context.tahfiz_id)
     )
@@ -938,6 +1084,9 @@ async def update_student(
                 name=pp.name,
             )
             db.add(parent_phone)
+
+    if body.category_ids is not None:
+        await set_student_categories(db, context.tahfiz_id, student_id, body.category_ids)
 
     if context.tahfiz.subscriptions_enabled and student.status == StudentStatus.enrolled:
         await ensure_current_subscription_records(db, context)
@@ -1542,6 +1691,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
         "present_status": present_status_option(tahfiz),
         "absent_status": absent_status_option(tahfiz),
+        "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
         "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
@@ -1674,6 +1824,12 @@ async def update_tahfiz_settings(
         if (tahfiz.absent_status or "").strip() != requested_absent_status:
             tahfiz.absent_status = requested_absent_status
             changed_fields.append("absent_status")
+    if (
+        body.multiple_sessions_per_day_enabled is not None
+        and tahfiz.multiple_sessions_per_day_enabled != body.multiple_sessions_per_day_enabled
+    ):
+        tahfiz.multiple_sessions_per_day_enabled = body.multiple_sessions_per_day_enabled
+        changed_fields.append("multiple_sessions_per_day_enabled")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),

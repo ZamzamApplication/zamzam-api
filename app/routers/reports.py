@@ -361,7 +361,7 @@ async def attendance_grid(
             raise HTTPException(status_code=400, detail="Invalid session_ids")
         if parsed_ids:
             query = query.where(Session.id.in_(parsed_ids))
-    query = query.order_by(Session.date.desc())
+    query = query.order_by(Session.date.desc(), Session.daily_sequence.desc(), Session.id.desc())
     if limit:
         query = query.limit(limit)
     result = await db.execute(query)
@@ -495,6 +495,13 @@ async def attendance_grid(
 
     return {
         "scope": "assigned_students" if context.restricts_sheikh_students else "tenant",
-        "sessions": [{"id": s.id, "date": s.date.isoformat(), "circle_id": s.tahfiz_id, "tahfiz_id": s.tahfiz_id} for s in sessions],
+        "sessions": [{
+            "id": s.id,
+            "date": s.date.isoformat(),
+            "name": s.name,
+            "daily_sequence": s.daily_sequence,
+            "circle_id": s.tahfiz_id,
+            "tahfiz_id": s.tahfiz_id,
+        } for s in sessions],
         "students": students_data,
     }

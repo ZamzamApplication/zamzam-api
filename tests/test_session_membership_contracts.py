@@ -27,6 +27,21 @@ class SessionMembershipContractTests(unittest.TestCase):
 
         self.assertTrue(student_is_in_session(session, None))
 
+    def test_selective_draft_never_synthesizes_unselected_students(self):
+        session = Session(
+            id=10,
+            date=date(2026, 8, 1),
+            tahfiz_id=2,
+            is_confirmed=False,
+            explicit_membership=True,
+        )
+
+        self.assertFalse(student_is_in_session(session, None))
+        self.assertTrue(student_is_in_session(
+            session,
+            Attendance(session_id=10, student_id=7, tahfiz_id=2, status="غياب"),
+        ))
+
     def test_register_uses_null_for_non_member_and_preserves_real_status(self):
         sessions = [
             Session(id=10, date=date(2026, 8, 1), tahfiz_id=2, is_confirmed=True),

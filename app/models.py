@@ -432,6 +432,7 @@ class Tahfiz(Base):
         default=DEFAULT_ABSENT_STATUS,
         nullable=False,
     )
+    multiple_sessions_per_day_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -455,6 +456,11 @@ class Tahfiz(Base):
     users: Mapped[list["User"]] = relationship("User", foreign_keys=[User.tahfiz_id], back_populates="tahfiz")
     memberships: Mapped[list["UserTahfizMembership"]] = relationship(
         "UserTahfizMembership",
+        back_populates="tahfiz",
+        cascade="all, delete-orphan",
+    )
+    student_categories: Mapped[list["StudentCategory"]] = relationship(
+        "StudentCategory",
         back_populates="tahfiz",
         cascade="all, delete-orphan",
     )
@@ -562,6 +568,48 @@ class Student(Base):
     excused_weekdays: Mapped[list["ExcusedWeekday"]] = relationship("ExcusedWeekday", back_populates="student", cascade="all, delete-orphan")
     excused_periods: Mapped[list["StudentExcusedPeriod"]] = relationship("StudentExcusedPeriod", back_populates="student", cascade="all, delete-orphan")
     quran_plans: Mapped[list["StudentQuranPlan"]] = relationship("StudentQuranPlan", back_populates="student", cascade="all, delete-orphan")
+    category_memberships: Mapped[list["StudentCategoryMembership"]] = relationship(
+        "StudentCategoryMembership",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+
+
+class StudentCategory(Base):
+    __tablename__ = "student_categories"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "name", name="uq_student_category_tenant_name"),
+        Index("ix_student_categories_tenant_name", "tahfiz_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    tahfiz: Mapped[Tahfiz] = relationship("Tahfiz", back_populates="student_categories")
+    memberships: Mapped[list["StudentCategoryMembership"]] = relationship(
+        "StudentCategoryMembership",
+        back_populates="category",
+        cascade="all, delete-orphan",
+    )
+
+
+class StudentCategoryMembership(Base):
+    __tablename__ = "student_category_memberships"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "category_id", "student_id", name="uq_student_category_membership"),
+        Index("ix_student_category_memberships_tenant_student", "tahfiz_id", "student_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("student_categories.id", ondelete="CASCADE"), nullable=False)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    category: Mapped[StudentCategory] = relationship("StudentCategory", back_populates="memberships")
+    student: Mapped[Student] = relationship("Student", back_populates="category_memberships")
 
 
 class StudentSubscription(Base):
@@ -694,10 +742,14 @@ class Session(Base):
     __tablename__ = "sessions"
     __table_args__ = (
         Index("ix_sessions_tahfiz_confirmed_date", "tahfiz_id", "is_confirmed", "date"),
+        UniqueConstraint("tahfiz_id", "date", "daily_sequence", name="uq_sessions_tenant_date_sequence"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    daily_sequence: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    explicit_membership: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     quran_progress_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -807,6 +859,7 @@ class StudentQuranPlan(Base):
     next_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_advanced_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_advanced_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

@@ -10,6 +10,7 @@ from app.database import get_db
 from app.quran_data import ayahs_to_end, lines_to_end, next_ayah, pages_to_end
 from app.time import utcnow
 from app.models import (
+    Attendance,
     AuditLog,
     ProgressCategory,
     QuranProgressEntry,
@@ -41,6 +42,10 @@ def ensure_enabled(context: TenantContext) -> None:
             status_code=409,
             detail={"code": "progress_tracking_disabled", "reason": "Qur'an progress tracking is disabled"},
         )
+
+
+def should_advance_plan(plan: StudentQuranPlan | None, session_date: date, existing: QuranProgressEntry | None) -> bool:
+    return plan is not None and existing is None and plan.last_advanced_on != session_date
 
 
 def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None) -> dict:
@@ -347,6 +352,14 @@ async def save_session_progress(
     ))).scalars().all())
     if valid_students != student_ids:
         raise HTTPException(status_code=404, detail="One or more students were not found")
+    if session.explicit_membership:
+        member_ids = set((await db.execute(select(Attendance.student_id).where(
+            Attendance.session_id == session_id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+            Attendance.student_id.in_(student_ids),
+        ))).scalars().all())
+        if member_ids != student_ids:
+            raise HTTPException(status_code=404, detail="One or more students are not members of this session")
 
     sheikh_ids = {item.sheikh_id for item in body.updates if item.sheikh_id is not None}
     if sheikh_ids:
@@ -431,7 +444,7 @@ async def save_session_progress(
         )
         await db.execute(statement)
         plan = plans_by_key.get((item.student_id, category.value))
-        if plan and existing is None and plan.last_advanced_session_id != session_id:
+        if should_advance_plan(plan, session.date, existing):
             if plan.increment_unit == WardIncrementUnit.pages:
                 if range_type != QuranRangeType.page or item.to_page is None:
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
@@ -441,6 +454,7 @@ async def save_session_progress(
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
                 plan.next_surah, plan.next_ayah = next_ayah(item.to_surah, item.to_ayah)
             plan.last_advanced_session_id = session_id
+            plan.last_advanced_on = session.date
             plan.updated_at = utcnow()
 
     db.add(AuditLog(

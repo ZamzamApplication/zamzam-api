@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from app.models import ProgressCategory, Session, StudentQuranPlan, Tahfiz, TahfizStatus, User, UserRole, WardIncrementUnit
 from app.routers.auth import TenantContext
-from app.routers.progress import ensure_enabled, plan_suggestion, session_progress, student_progress
+from app.routers.progress import ensure_enabled, plan_suggestion, session_progress, should_advance_plan, student_progress
 from app.routers.sessions import session_status, session_summary, update_session_progress_tracking
 from app.schemas import CreateStudentGoalRequest, QuranProgressItem, SessionQuranProgressRequest, StudentQuranPlansRequest
 
@@ -78,6 +78,12 @@ class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
 
 
 class QuranRangeValidationTests(unittest.TestCase):
+    def test_plan_advances_only_once_per_calendar_date(self):
+        plan = StudentQuranPlan(last_advanced_on=date(2026, 8, 11))
+
+        self.assertFalse(should_advance_plan(plan, date(2026, 8, 11), None))
+        self.assertTrue(should_advance_plan(plan, date(2026, 8, 12), None))
+
     def test_student_plans_support_independent_units(self):
         request = StudentQuranPlansRequest(plans=[
             {"category": "new_memorization", "increment_unit": "lines", "increment_amount": 5, "next_surah": 2, "next_ayah": 1},

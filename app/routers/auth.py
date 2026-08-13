@@ -658,6 +658,7 @@ async def get_me(
             "attendance_streak_reset_statuses": excused_absence_reset_status_options(tahfiz),
             "present_status": present_status_option(tahfiz),
             "absent_status": absent_status_option(tahfiz),
+            "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),

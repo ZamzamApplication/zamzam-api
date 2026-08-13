@@ -49,6 +49,14 @@ def test_absent_status_defaults_and_can_be_configured():
     assert request.absent_status == "متغيب"
 
 
+def test_multiple_daily_sessions_default_off_and_can_be_enabled():
+    tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
+    request = UpdateTahfizSettingsRequest(multiple_sessions_per_day_enabled=True)
+
+    assert serialize_tahfiz(tahfiz)["multiple_sessions_per_day_enabled"] is False
+    assert request.multiple_sessions_per_day_enabled is True
+
+
 def test_excel_export_templates_default_for_existing_tahfiz():
     tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
 
