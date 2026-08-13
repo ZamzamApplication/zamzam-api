@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.media import signed_media_url
 from app.models import (
+    ACTIVE_STUDENT_STATUSES,
     Attendance,
     AttendanceStatus,
     QuranProgressEntry,
@@ -92,7 +93,7 @@ async def dashboard_summary(
             sheikh_count_query.scalar_subquery(),
             select(func.count(Student.id)).where(
                 student_scope_clause(context),
-                Student.status == StudentStatus.enrolled,
+                Student.status.in_(ACTIVE_STUDENT_STATUSES),
             ).scalar_subquery(),
             select(func.count(Session.id)).where(Session.tahfiz_id == tahfiz_id).scalar_subquery(),
             select(func.count(Session.id)).where(
@@ -149,7 +150,7 @@ async def circle_attendance_rate(
     tahfiz_id = context.tahfiz_id
     result = await db.execute(
         select(Student.id)
-        .where(student_scope_clause(context), Student.status == StudentStatus.enrolled)
+        .where(student_scope_clause(context), Student.status.in_(ACTIVE_STUDENT_STATUSES))
     )
     student_ids = [row[0] for row in result.all()]
 
@@ -213,7 +214,7 @@ async def circle_student_stats(
     result = await db.execute(
         select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
-        .where(student_scope_clause(context), Student.status == StudentStatus.enrolled)
+        .where(student_scope_clause(context), Student.status.in_(ACTIVE_STUDENT_STATUSES))
         .order_by(Student.name)
     )
     rows = result.all()
@@ -376,7 +377,7 @@ async def attendance_grid(
             .where(
                 Student.sheikh_id == sheikh_id,
                 student_scope_clause(context),
-                Student.status == StudentStatus.enrolled,
+                Student.status.in_(ACTIVE_STUDENT_STATUSES),
             )
             .order_by(Student.name)
         )
@@ -388,7 +389,7 @@ async def attendance_grid(
             select(Student)
             .outerjoin(Sheikh)
             .options(selectinload(Student.sheikh))
-            .where(Student.status == StudentStatus.enrolled, student_scope_clause(context))
+            .where(Student.status.in_(ACTIVE_STUDENT_STATUSES), student_scope_clause(context))
             .order_by(Student.name)
         )
         students = result.scalars().all()
@@ -453,8 +454,10 @@ async def attendance_grid(
         subscription_amounts = dict((await db.execute(select(
             StudentSubscription.student_snapshot_id,
             StudentSubscription.amount_due_minor,
-        ).where(
+        ).join(Student, Student.id == StudentSubscription.student_id).where(
             StudentSubscription.tahfiz_id == context.tahfiz_id,
+            Student.tahfiz_id == context.tahfiz_id,
+            Student.status == StudentStatus.enrolled,
             StudentSubscription.period_start == subscription_period,
             StudentSubscription.student_snapshot_id.in_(student_ids),
             StudentSubscription.is_paid.is_(True),

@@ -55,6 +55,10 @@ class InitialTahfizSettingsRequest(BaseModel):
     present_status: str = Field(default="حاضر", min_length=1, max_length=50)
     absent_status: str = Field(default="غياب", min_length=1, max_length=50)
     session_name_options: list[str] = Field(default_factory=lambda: ["الصباحية", "المسائية"], min_length=1, max_length=20)
+    subscriptions_enabled: bool = False
+    subscription_default_fee_minor: int = Field(default=0, ge=0)
+    subscription_currency: str = Field(default="EGP", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
+    month_start_day: int = Field(default=1, ge=1, le=28)
 
     @field_validator("attendance_statuses", "session_name_options")
     @classmethod
@@ -74,6 +78,9 @@ class InitialTahfizSettingsRequest(BaseModel):
             raise ValueError("Present and absent statuses must be included in attendance statuses")
         if self.present_status == self.absent_status:
             raise ValueError("Present and absent statuses must be different")
+        self.subscription_currency = self.subscription_currency.upper()
+        if self.subscriptions_enabled and self.subscription_default_fee_minor <= 0:
+            raise ValueError("A positive default monthly fee is required when subscriptions are enabled")
         return self
 
 

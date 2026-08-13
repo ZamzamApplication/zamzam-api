@@ -17,6 +17,9 @@ class StudentStatus(str, enum.Enum):
     not_enrolled = "غير مقيد"
 
 
+ACTIVE_STUDENT_STATUSES = (StudentStatus.enrolled, StudentStatus.guest)
+
+
 class AttendanceStatus(str, enum.Enum):
     present = "حاضر"  # noqa: F821
     absent = "غياب"  # noqa: F821

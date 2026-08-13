@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 from pydantic import ValidationError
 
-from app.models import StudentSubscription
-from app.routers import management, subscriptions
-from app.schemas import BulkSubscriptionPaymentRequest, SubscriptionAmountRequest, SubscriptionPaymentRequest, UpdateTahfizSettingsRequest
+from app.models import ACTIVE_STUDENT_STATUSES, StudentStatus, StudentSubscription
+from app.routers import finance, management, reports, sessions, subscriptions
+from app.schemas import BulkSubscriptionPaymentRequest, SignupRequest, SubscriptionAmountRequest, SubscriptionPaymentRequest, UpdateTahfizSettingsRequest
 
 
 class SubscriptionPeriodTests(unittest.TestCase):
@@ -49,6 +49,27 @@ class SubscriptionPeriodTests(unittest.TestCase):
 
 
 class SubscriptionSchemaTests(unittest.TestCase):
+    def test_signup_requires_payment_configuration_when_subscriptions_are_enabled(self):
+        with self.assertRaises(ValidationError):
+            SignupRequest(
+                username="owner",
+                password="password123",
+                tahfiz_name="دار الاختبار",
+                subscriptions_enabled=True,
+                subscription_default_fee_minor=0,
+            )
+        request = SignupRequest(
+            username="owner",
+            password="password123",
+            tahfiz_name="دار الاختبار",
+            subscriptions_enabled=True,
+            subscription_default_fee_minor=15000,
+            subscription_currency="egp",
+            month_start_day=15,
+        )
+        self.assertEqual(request.subscription_currency, "EGP")
+        self.assertEqual(request.month_start_day, 15)
+
     def test_main_settings_accept_optional_subscription_controls(self):
         request = UpdateTahfizSettingsRequest(
             subscriptions_enabled=True,
@@ -119,6 +140,17 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn("subscription_batch_stale", source)
         self.assertIn("subscription_currency_locked", source)
         self.assertIn("Student.registration_date <= today", source)
+        self.assertIn("Student.status == StudentStatus.enrolled", source)
+        self.assertIn('"student_not_enrolled"', source)
+
+    def test_inactive_students_are_archived_but_guests_remain_operational(self):
+        self.assertEqual(ACTIVE_STUDENT_STATUSES, (StudentStatus.enrolled, StudentStatus.guest))
+        self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(sessions))
+        self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(reports))
+
+    def test_financial_views_only_bill_enrolled_students(self):
+        self.assertIn("Student.status == StudentStatus.enrolled", inspect.getsource(subscriptions.filtered_statement))
+        self.assertIn("Student.status == StudentStatus.enrolled", inspect.getsource(finance.overview))
 
     def test_student_deletion_removes_unpaid_subscriptions(self):
         source = inspect.getsource(management.delete_student_entity)

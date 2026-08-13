@@ -10,6 +10,7 @@ from app.excused_periods import automatic_attendance, periods_on_date
 from app.time import utcnow
 from app.media import signed_media_url
 from app.models import (
+    ACTIVE_STUDENT_STATUSES,
     Attendance,
     AttendanceBatchOperation,
     AttendanceStatus,
@@ -151,7 +152,7 @@ async def create_session(
         .join(Sheikh)
         .where(
             Sheikh.tahfiz_id == context.tahfiz_id,
-            Student.status == StudentStatus.enrolled,
+            Student.status.in_(ACTIVE_STUDENT_STATUSES),
             *([Student.id.in_(body.student_ids)] if multiple_enabled else []),
         )
     )
@@ -309,7 +310,7 @@ async def get_session_attendance(
         student.id
         for sheikh in circle_sheikhs
         for student in sheikh.students
-        if student.status == StudentStatus.enrolled
+        if student.status in ACTIVE_STUDENT_STATUSES
     ]
     attendance_rows = (await db.execute(
         select(Attendance).where(
@@ -333,7 +334,7 @@ async def get_session_attendance(
     for sheikh in circle_sheikhs:
         students_list = []
         for s in sheikh.students:
-            if s.status != StudentStatus.enrolled:
+            if s.status not in ACTIVE_STUDENT_STATUSES:
                 continue
             excused_weekday = excused_by_student.get(s.id)
             excused_note = excused_weekday.note if excused_weekday else None
@@ -422,7 +423,7 @@ async def update_session_membership(
         .join(Sheikh)
         .where(
             Sheikh.tahfiz_id == context.tahfiz_id,
-            Student.status == StudentStatus.enrolled,
+            Student.status.in_(ACTIVE_STUDENT_STATUSES),
             Student.id.in_(requested_ids),
         )
     )).scalars().all()
@@ -591,7 +592,7 @@ async def confirm_session(
         .join(Sheikh)
         .where(
             Sheikh.tahfiz_id == session.tahfiz_id,
-            Student.status == StudentStatus.enrolled,
+            Student.status.in_(ACTIVE_STUDENT_STATUSES),
         )
     )
     all_students = result.scalars().all()

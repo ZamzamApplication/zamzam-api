@@ -27,6 +27,7 @@ from app.integrations import encrypt_secret, tenant_whatsend_config, validate_wh
 from app.time import utcnow
 from app.media import signed_media_url
 from app.models import (
+    ACTIVE_STUDENT_STATUSES,
     Attendance,
     AuditLog,
     DeviceSession,
@@ -367,7 +368,12 @@ async def list_student_categories(
     ).order_by(StudentCategory.name, StudentCategory.id))).scalars().all()
     counts = dict((await db.execute(
         select(StudentCategoryMembership.category_id, func.count(StudentCategoryMembership.id))
-        .where(StudentCategoryMembership.tahfiz_id == context.tahfiz_id)
+        .join(Student, Student.id == StudentCategoryMembership.student_id)
+        .where(
+            StudentCategoryMembership.tahfiz_id == context.tahfiz_id,
+            Student.tahfiz_id == context.tahfiz_id,
+            Student.status.in_(ACTIVE_STUDENT_STATUSES),
+        )
         .group_by(StudentCategoryMembership.category_id)
     )).all())
     return [{"id": row.id, "name": row.name, "student_count": counts.get(row.id, 0)} for row in rows]

@@ -158,9 +158,14 @@ async def tenant_record(
     context: TenantContext,
     record_id: int,
 ) -> StudentSubscription:
-    record = (await db.execute(select(StudentSubscription).where(
+    record = (await db.execute(
+        select(StudentSubscription)
+        .join(Student, Student.id == StudentSubscription.student_id)
+        .where(
         StudentSubscription.id == record_id,
         StudentSubscription.tahfiz_id == context.tahfiz_id,
+        Student.tahfiz_id == context.tahfiz_id,
+        Student.status == StudentStatus.enrolled,
     ))).scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="Subscription record not found")
@@ -175,9 +180,13 @@ def filtered_statement(
     student_id: int | None,
     search: str | None,
 ):
-    statement = select(StudentSubscription).where(
+    statement = select(StudentSubscription).join(
+        Student, Student.id == StudentSubscription.student_id
+    ).where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.period_start == period,
+        Student.tahfiz_id == context.tahfiz_id,
+        Student.status == StudentStatus.enrolled,
     )
     if paid is True:
         statement = statement.where(StudentSubscription.is_paid.is_(True))
@@ -284,6 +293,8 @@ async def update_student_fee(
     ))).scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    if student.status != StudentStatus.enrolled:
+        raise HTTPException(status_code=409, detail={"code": "student_not_enrolled"})
     previous = student.subscription_fee_override_minor
     student.subscription_fee_override_minor = body.monthly_fee_minor
     db.add(AuditLog(
@@ -309,6 +320,8 @@ async def student_current(
     ))).scalar_one_or_none()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    if student.status != StudentStatus.enrolled:
+        raise HTTPException(status_code=409, detail={"code": "student_not_enrolled"})
     if context.tahfiz.subscriptions_enabled:
         await ensure_current_subscription_records(db, context)
         await db.commit()
@@ -375,9 +388,14 @@ async def bulk_mark_paid(
 ):
     if body.payment_date > date.today():
         raise HTTPException(status_code=400, detail={"code": "future_payment_date"})
-    rows = list((await db.execute(select(StudentSubscription).where(
+    rows = list((await db.execute(
+        select(StudentSubscription)
+        .join(Student, Student.id == StudentSubscription.student_id)
+        .where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.id.in_(body.record_ids),
+        Student.tahfiz_id == context.tahfiz_id,
+        Student.status == StudentStatus.enrolled,
     ).order_by(StudentSubscription.id))).scalars().all())
     if {row.id for row in rows} != set(body.record_ids):
         raise HTTPException(status_code=404, detail={"code": "subscription_record_not_found"})
@@ -427,6 +445,7 @@ async def bulk_correct_amount(
             StudentSubscription.period_start == period_start,
             StudentSubscription.is_paid.is_(False),
             StudentSubscription.amount_due_minor == body.from_fee_minor,
+            Student.status == StudentStatus.enrolled,
             or_(Student.id.is_(None), Student.subscription_fee_override_minor.is_(None)),
         )
         .order_by(StudentSubscription.id)

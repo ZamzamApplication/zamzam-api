@@ -65,6 +65,10 @@ def initial_tahfiz_settings(body: SignupRequest | CreateTahfizRequest) -> dict:
         "attendance_streak_status": body.absent_status,
         "excused_absence_reset_statuses": json.dumps([body.present_status], ensure_ascii=False),
         "session_name_options": json.dumps(body.session_name_options, ensure_ascii=False),
+        "subscriptions_enabled": body.subscriptions_enabled,
+        "subscription_default_fee_minor": body.subscription_default_fee_minor,
+        "subscription_currency": body.subscription_currency,
+        "month_start_day": body.month_start_day,
     }
 
 
