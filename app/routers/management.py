@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import uuid
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 
@@ -41,6 +42,8 @@ from app.models import (
     Student,
     StudentCategory,
     StudentCategoryMembership,
+    StudentCustomField,
+    StudentCustomFieldValue,
     StudentExcusedPeriod,
     StudentGoal,
     StudentQuranPlan,
@@ -71,6 +74,9 @@ from app.schemas import (
     CreateSheikhRequest,
     CreateStudentRequest,
     StudentCategoryRequest,
+    StudentCustomFieldRequest,
+    UpdateStudentCustomFieldRequest,
+    UpdateStudentCustomFieldValuesRequest,
     CreateUserRequest,
     CreateWarningRequest,
     DeleteSheikhRequest,
@@ -129,6 +135,226 @@ async def set_student_categories(
             category_id=category_id,
             student_id=student_id,
         ))
+
+
+def serialize_student_custom_field(field: StudentCustomField, context: TenantContext) -> dict:
+    try:
+        options = json.loads(field.options or "[]")
+    except (TypeError, json.JSONDecodeError):
+        options = []
+    is_admin = context.effective_role in (UserRole.admin, UserRole.super_admin)
+    return {
+        "id": field.id,
+        "name": field.name,
+        "field_type": field.field_type,
+        "options": options if isinstance(options, list) else [],
+        "is_required": field.is_required,
+        "is_active": field.is_active,
+        "sort_order": field.sort_order,
+        "created_by_user_id": field.created_by_user_id,
+        "can_edit": is_admin or field.created_by_user_id == context.user.id,
+    }
+
+
+def can_create_student_custom_fields(context: TenantContext) -> bool:
+    return (
+        context.effective_role in (UserRole.admin, UserRole.super_admin)
+        or (context.effective_role == UserRole.sheikh and context.tahfiz.sheikh_custom_fields_enabled is True)
+    )
+
+
+def normalize_student_custom_value(field: StudentCustomField, raw_value) -> str | None:
+    if raw_value is None or raw_value == "":
+        if field.is_required:
+            raise HTTPException(status_code=422, detail={"code": "required_custom_field", "field_id": field.id})
+        return None
+    if field.field_type == "text":
+        value = str(raw_value).strip()
+        if len(value) > 2000:
+            raise HTTPException(status_code=422, detail={"code": "custom_field_value_too_long", "field_id": field.id})
+        return value or None
+    if field.field_type == "number":
+        try:
+            value = Decimal(str(raw_value))
+        except InvalidOperation as exc:
+            raise HTTPException(status_code=422, detail={"code": "invalid_custom_field_number", "field_id": field.id}) from exc
+        if not value.is_finite():
+            raise HTTPException(status_code=422, detail={"code": "invalid_custom_field_number", "field_id": field.id})
+        return format(value, "f")
+    if field.field_type == "date":
+        try:
+            return date.fromisoformat(str(raw_value)).isoformat()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={"code": "invalid_custom_field_date", "field_id": field.id}) from exc
+    if field.field_type == "checkbox":
+        if isinstance(raw_value, bool):
+            return "true" if raw_value else "false"
+        if str(raw_value).lower() in {"true", "false"}:
+            return str(raw_value).lower()
+        raise HTTPException(status_code=422, detail={"code": "invalid_custom_field_checkbox", "field_id": field.id})
+    options = json.loads(field.options or "[]")
+    value = str(raw_value)
+    if value not in options:
+        raise HTTPException(status_code=422, detail={"code": "invalid_custom_field_option", "field_id": field.id})
+    return value
+
+
+async def apply_student_custom_field_values(
+    db: AsyncSession,
+    context: TenantContext,
+    student_id: int,
+    raw_values: dict[int, str | bool | int | float | None],
+) -> dict[int, str]:
+    active_fields = (await db.execute(select(StudentCustomField).where(
+        StudentCustomField.tahfiz_id == context.tahfiz_id,
+        StudentCustomField.is_active == True,
+    ))).scalars().all()
+    field_map = {field.id: field for field in active_fields}
+    if any(field_id not in field_map for field_id in raw_values):
+        raise HTTPException(status_code=404, detail="One or more custom fields were not found")
+
+    existing_rows = (await db.execute(select(StudentCustomFieldValue).where(
+        StudentCustomFieldValue.tahfiz_id == context.tahfiz_id,
+        StudentCustomFieldValue.student_id == student_id,
+    ))).scalars().all()
+    existing = {row.field_id: row for row in existing_rows}
+    normalized_updates = {
+        field_id: normalize_student_custom_value(field_map[field_id], value)
+        for field_id, value in raw_values.items()
+    }
+    final_values = {field_id: row.value for field_id, row in existing.items()}
+    for field_id, value in normalized_updates.items():
+        if value is None:
+            final_values.pop(field_id, None)
+        else:
+            final_values[field_id] = value
+
+    missing_required = [field.id for field in active_fields if field.is_required and not final_values.get(field.id)]
+    if missing_required:
+        raise HTTPException(status_code=422, detail={"code": "required_custom_fields", "field_ids": missing_required})
+
+    for field_id, value in normalized_updates.items():
+        row = existing.get(field_id)
+        if value is None:
+            if row:
+                await db.delete(row)
+        elif row:
+            row.value = value
+            row.updated_by_user_id = context.user.id
+            row.updated_at = utcnow()
+        else:
+            db.add(StudentCustomFieldValue(
+                tahfiz_id=context.tahfiz_id,
+                student_id=student_id,
+                field_id=field_id,
+                value=value,
+                updated_by_user_id=context.user.id,
+            ))
+    return final_values
+
+
+@router.get("/student-custom-fields")
+async def list_student_custom_fields(
+    include_inactive: bool = False,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    query = select(StudentCustomField).where(StudentCustomField.tahfiz_id == context.tahfiz_id)
+    if not include_inactive:
+        query = query.where(StudentCustomField.is_active == True)
+    rows = (await db.execute(query.order_by(StudentCustomField.sort_order, StudentCustomField.name, StudentCustomField.id))).scalars().all()
+    return {
+        "fields": [serialize_student_custom_field(row, context) for row in rows],
+        "can_create": can_create_student_custom_fields(context),
+    }
+
+
+@router.post("/student-custom-fields", status_code=201)
+async def create_student_custom_field(
+    body: StudentCustomFieldRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    if not can_create_student_custom_fields(context):
+        raise HTTPException(status_code=403, detail="Custom field creation is disabled")
+    duplicate = await db.scalar(select(StudentCustomField.id).where(
+        StudentCustomField.tahfiz_id == context.tahfiz_id,
+        StudentCustomField.name == body.name,
+    ))
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail={"code": "student_custom_field_name_exists"})
+    max_order = int(await db.scalar(select(func.coalesce(func.max(StudentCustomField.sort_order), -1)).where(
+        StudentCustomField.tahfiz_id == context.tahfiz_id,
+    )) or 0)
+    field = StudentCustomField(
+        tahfiz_id=context.tahfiz_id,
+        name=body.name,
+        field_type=body.field_type,
+        options=json.dumps(body.options, ensure_ascii=False),
+        is_required=body.is_required,
+        sort_order=max_order + 1,
+        created_by_user_id=context.user.id,
+    )
+    db.add(field)
+    await db.flush()
+    db.add(AuditLog(actor_user_id=context.user.id, tahfiz_id=context.tahfiz_id, action="student_custom_field.created", details=f"field={field.id}; name={field.name}"))
+    await db.commit()
+    return serialize_student_custom_field(field, context)
+
+
+@router.put("/student-custom-fields/{field_id}")
+async def update_student_custom_field(
+    field_id: int,
+    body: UpdateStudentCustomFieldRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    field = await db.scalar(select(StudentCustomField).where(StudentCustomField.id == field_id, StudentCustomField.tahfiz_id == context.tahfiz_id))
+    if not field:
+        raise HTTPException(status_code=404, detail="Student custom field not found")
+    if context.effective_role not in (UserRole.admin, UserRole.super_admin) and field.created_by_user_id != context.user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to edit this custom field")
+    duplicate = await db.scalar(select(StudentCustomField.id).where(
+        StudentCustomField.tahfiz_id == context.tahfiz_id,
+        StudentCustomField.name == body.name,
+        StudentCustomField.id != field_id,
+    ))
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail={"code": "student_custom_field_name_exists"})
+    value_rows = (await db.execute(select(StudentCustomFieldValue.value).where(
+        StudentCustomFieldValue.tahfiz_id == context.tahfiz_id,
+        StudentCustomFieldValue.field_id == field.id,
+    ))).scalars().all()
+    if field.field_type != body.field_type and value_rows:
+        raise HTTPException(status_code=409, detail={"code": "custom_field_type_locked"})
+    if body.field_type == "select" and any(value not in body.options for value in value_rows):
+        raise HTTPException(status_code=409, detail={"code": "custom_field_options_in_use"})
+    field.name = body.name
+    field.field_type = body.field_type
+    field.options = json.dumps(body.options, ensure_ascii=False)
+    field.is_required = body.is_required
+    field.is_active = body.is_active
+    db.add(AuditLog(actor_user_id=context.user.id, tahfiz_id=context.tahfiz_id, action="student_custom_field.updated", details=f"field={field.id}; name={field.name}; active={field.is_active}"))
+    await db.commit()
+    return serialize_student_custom_field(field, context)
+
+
+@router.put("/students/{student_id}/custom-field-values")
+async def update_student_custom_field_values(
+    student_id: int,
+    body: UpdateStudentCustomFieldValuesRequest,
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(get_tenant_context),
+):
+    student = await db.scalar(select(Student).where(Student.id == student_id, student_scope_clause(context)))
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    raw_values = {item.field_id: item.value for item in body.values}
+    final_values = await apply_student_custom_field_values(db, context, student_id, raw_values)
+    field_ids = list(raw_values)
+    db.add(AuditLog(actor_user_id=context.user.id, tahfiz_id=context.tahfiz_id, action="student.custom_fields_updated", details=f"student={student_id}; fields={','.join(map(str, field_ids))}"))
+    await db.commit()
+    return {"student_id": student_id, "values": {str(field_id): value for field_id, value in final_values.items()}}
 
 
 @router.get("/student-categories")
@@ -838,6 +1064,13 @@ async def list_students(
     students = result.scalars().all()
 
     student_ids = [s.id for s in students]
+    custom_value_rows = (await db.execute(select(StudentCustomFieldValue).where(
+        StudentCustomFieldValue.tahfiz_id == context.tahfiz_id,
+        StudentCustomFieldValue.student_id.in_(student_ids),
+    ))).scalars().all() if student_ids else []
+    custom_values_by_student: dict[int, dict[str, str]] = {}
+    for value_row in custom_value_rows:
+        custom_values_by_student.setdefault(value_row.student_id, {})[str(value_row.field_id)] = value_row.value
     ew_result = await db.execute(
         select(ExcusedWeekday).where(ExcusedWeekday.student_id.in_(student_ids))
     )
@@ -868,6 +1101,7 @@ async def list_students(
             "excused_weekdays": ew_map.get(s.id, []),
             "categories": serialize_student_categories(s),
             "category_ids": [item["id"] for item in serialize_student_categories(s)],
+            "custom_field_values": custom_values_by_student.get(s.id, {}),
         }
         for s in students
     ]
@@ -922,6 +1156,10 @@ async def student_profile(
             StudentGoal.status == "active",
         )
     ) or 0)
+    custom_value_rows = (await db.execute(select(StudentCustomFieldValue).where(
+        StudentCustomFieldValue.tahfiz_id == context.tahfiz_id,
+        StudentCustomFieldValue.student_id == student.id,
+    ))).scalars().all()
 
     return {
         "id": student.id,
@@ -948,6 +1186,7 @@ async def student_profile(
         ],
         "categories": serialize_student_categories(student),
         "category_ids": [item["id"] for item in serialize_student_categories(student)],
+        "custom_field_values": {str(row.field_id): row.value for row in custom_value_rows},
         "excused_weekdays": [
             {"id": row.id, "weekday": row.weekday, "note": row.note}
             for row in sorted(student.excused_weekdays, key=lambda row: row.weekday)
@@ -1012,6 +1251,7 @@ async def create_student(
     db.add(student)
     await db.flush()
     await set_student_categories(db, context.tahfiz_id, student.id, body.category_ids)
+    await apply_student_custom_field_values(db, context, student.id, body.custom_field_values)
 
     for pp in body.parent_phones:
         if pp.parent_type not in [t.value for t in ParentType]:
@@ -1087,6 +1327,8 @@ async def update_student(
 
     if body.category_ids is not None:
         await set_student_categories(db, context.tahfiz_id, student_id, body.category_ids)
+    if body.custom_field_values is not None:
+        await apply_student_custom_field_values(db, context, student_id, body.custom_field_values)
 
     if context.tahfiz.subscriptions_enabled and student.status == StudentStatus.enrolled:
         await ensure_current_subscription_records(db, context)
@@ -1699,6 +1941,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "absent_status": absent_status_option(tahfiz),
         "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
         "session_name_options": [name for name in session_name_options if isinstance(name, str) and name.strip()],
+        "sheikh_custom_fields_enabled": tahfiz.sheikh_custom_fields_enabled is True,
         "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
@@ -1845,6 +2088,9 @@ async def update_tahfiz_settings(
         if tahfiz.session_name_options != serialized_session_names:
             tahfiz.session_name_options = serialized_session_names
             changed_fields.append("session_name_options")
+    if body.sheikh_custom_fields_enabled is not None and tahfiz.sheikh_custom_fields_enabled != body.sheikh_custom_fields_enabled:
+        tahfiz.sheikh_custom_fields_enabled = body.sheikh_custom_fields_enabled
+        changed_fields.append("sheikh_custom_fields_enabled")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),

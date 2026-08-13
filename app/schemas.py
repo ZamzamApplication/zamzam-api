@@ -84,6 +84,7 @@ class TahfizOut(BaseModel):
     absent_status: str = "غياب"
     multiple_sessions_per_day_enabled: bool = False
     session_name_options: list[str] = Field(default_factory=lambda: ["الصباحية", "المسائية"])
+    sheikh_custom_fields_enabled: bool = True
     attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
@@ -181,6 +182,7 @@ class StudentOut(BaseModel):
     parent_phones: list[ParentPhoneOut] = Field(default_factory=list)
     excused_weekdays: list[ExcusedWeekdayOut] = Field(default_factory=list)
     excused_periods: list[ExcusedPeriodOut] = Field(default_factory=list)
+    custom_field_values: dict[str, str] = Field(default_factory=dict)
 
     class Config:
         from_attributes = True
@@ -326,6 +328,7 @@ class CreateStudentRequest(BaseModel):
     sheikh_id: int | None = None
     parent_phones: list[CreateParentPhone] = Field(default_factory=list, max_length=20)
     category_ids: list[int] = Field(default_factory=list, max_length=100)
+    custom_field_values: dict[int, str | bool | int | float | None] = Field(default_factory=dict, max_length=100)
 
     @field_validator("category_ids")
     @classmethod
@@ -495,12 +498,62 @@ class UpdateStudentRequest(BaseModel):
     sheikh_id: int | None = None
     parent_phones: list[UpdateParentPhone] | None = Field(default=None, max_length=20)
     category_ids: list[int] | None = Field(default=None, max_length=100)
+    custom_field_values: dict[int, str | bool | int | float | None] | None = Field(default=None, max_length=100)
 
     @field_validator("category_ids")
     @classmethod
     def unique_update_categories(cls, values: list[int] | None) -> list[int] | None:
         if values is not None and len(values) != len(set(values)):
             raise ValueError("Each category may only appear once")
+        return values
+
+
+class StudentCustomFieldRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    field_type: Literal["text", "number", "date", "checkbox", "select"]
+    options: list[str] = Field(default_factory=list, max_length=50)
+    is_required: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def normalize_custom_field_name(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("options")
+    @classmethod
+    def normalize_custom_field_options(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if any(len(value) > 100 for value in normalized):
+            raise ValueError("Custom field options are too long")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_select_options(self):
+        if self.field_type == "select" and not self.options:
+            raise ValueError("Select fields require at least one option")
+        if self.field_type != "select" and self.options:
+            raise ValueError("Only select fields may define options")
+        return self
+
+
+class UpdateStudentCustomFieldRequest(StudentCustomFieldRequest):
+    is_active: bool = True
+
+
+class StudentCustomFieldValueInput(BaseModel):
+    field_id: int
+    value: str | bool | int | float | None = None
+
+
+class UpdateStudentCustomFieldValuesRequest(BaseModel):
+    values: list[StudentCustomFieldValueInput] = Field(default_factory=list, max_length=100)
+
+    @field_validator("values")
+    @classmethod
+    def unique_custom_field_values(cls, values: list[StudentCustomFieldValueInput]):
+        ids = [value.field_id for value in values]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Each custom field may only appear once")
         return values
 
 
@@ -622,6 +675,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     absent_status: str | None = Field(default=None, min_length=1, max_length=50)
     multiple_sessions_per_day_enabled: bool | None = None
     session_name_options: list[str] | None = Field(default=None, max_length=20)
+    sheikh_custom_fields_enabled: bool | None = None
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = Field(default=None, max_length=500)

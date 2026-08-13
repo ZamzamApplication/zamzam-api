@@ -14,6 +14,7 @@ from app.models import (
     Session,
     Sheikh,
     Student,
+    StudentCustomFieldValue,
     StudentStatus,
     StudentSubscription,
     StudentWarning,
@@ -461,6 +462,14 @@ async def attendance_grid(
 
     max_warnings = context.tahfiz.max_warnings
 
+    custom_value_rows = (await db.execute(select(StudentCustomFieldValue).where(
+        StudentCustomFieldValue.tahfiz_id == context.tahfiz_id,
+        StudentCustomFieldValue.student_id.in_(student_ids),
+    ))).scalars().all()
+    custom_values: dict[int, dict[str, str]] = {}
+    for value_row in custom_value_rows:
+        custom_values.setdefault(value_row.student_id, {})[str(value_row.field_id)] = value_row.value
+
     # Build lookup: (student_id, session_id) -> status
     att_lookup: dict[tuple[int, int], str] = {}
     for att in attendance_records:
@@ -490,6 +499,7 @@ async def attendance_grid(
             "remaining_warnings": max(max_warnings - next_warning_number, 0),
             **({"subscription_amount_minor": subscription_amounts.get(sid)} if context.effective_role in (UserRole.admin, UserRole.super_admin) else {}),
             "quran_progress_ranges": quran_progress_ranges.get(sid, {}),
+            "custom_field_values": custom_values.get(sid, {}),
             "records": records,
         })
 

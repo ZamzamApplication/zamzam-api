@@ -661,6 +661,7 @@ async def get_me(
             "absent_status": absent_status_option(tahfiz),
             "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
             "session_name_options": json.loads(tahfiz.session_name_options or "[]"),
+            "sheikh_custom_fields_enabled": tahfiz.sheikh_custom_fields_enabled is True,
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),

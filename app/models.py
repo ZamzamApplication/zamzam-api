@@ -438,6 +438,7 @@ class Tahfiz(Base):
         default=lambda: json.dumps(["الصباحية", "المسائية"], ensure_ascii=False),
         nullable=False,
     )
+    sheikh_custom_fields_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -578,6 +579,41 @@ class Student(Base):
         back_populates="student",
         cascade="all, delete-orphan",
     )
+
+
+class StudentCustomField(Base):
+    __tablename__ = "student_custom_fields"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "name", name="uq_student_custom_field_tenant_name"),
+        Index("ix_student_custom_fields_tenant_order", "tahfiz_id", "is_active", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    field_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    options: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class StudentCustomFieldValue(Base):
+    __tablename__ = "student_custom_field_values"
+    __table_args__ = (
+        UniqueConstraint("tahfiz_id", "student_id", "field_id", name="uq_student_custom_field_value"),
+        Index("ix_student_custom_field_values_tenant_student", "tahfiz_id", "student_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    field_id: Mapped[int] = mapped_column(Integer, ForeignKey("student_custom_fields.id", ondelete="CASCADE"), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class StudentCategory(Base):
