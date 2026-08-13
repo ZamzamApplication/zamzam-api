@@ -83,6 +83,7 @@ class TahfizOut(BaseModel):
     present_status: str = "حاضر"
     absent_status: str = "غياب"
     multiple_sessions_per_day_enabled: bool = False
+    session_name_options: list[str] = Field(default_factory=lambda: ["الصباحية", "المسائية"])
     attendance_status_colors: dict[str, str] = Field(default_factory=lambda: {
         "حاضر": "green",
         "غياب": "slate",
@@ -620,6 +621,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     present_status: str | None = Field(default=None, min_length=1, max_length=50)
     absent_status: str | None = Field(default=None, min_length=1, max_length=50)
     multiple_sessions_per_day_enabled: bool | None = None
+    session_name_options: list[str] | None = Field(default=None, max_length=20)
     attendance_status_colors: dict[str, str] | None = None
     excel_export_templates: dict[str, ExcelExportTemplateSettings] | None = None
     whatsend_api_url: str | None = Field(default=None, max_length=500)

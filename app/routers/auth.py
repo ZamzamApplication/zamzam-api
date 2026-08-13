@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 import secrets
 
@@ -659,6 +660,7 @@ async def get_me(
             "present_status": present_status_option(tahfiz),
             "absent_status": absent_status_option(tahfiz),
             "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
+            "session_name_options": json.loads(tahfiz.session_name_options or "[]"),
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         } if tahfiz else None),

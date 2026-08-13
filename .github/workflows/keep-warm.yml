@@ -1,0 +1,25 @@
+name: Keep production warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Keep API and web running from noon to midnight Cairo time
+        shell: bash
+        run: |
+          cairo_hour="$(TZ=Africa/Cairo date +%H)"
+          if (( 10#$cairo_hour < 12 )); then
+            echo "Outside the keep-warm window; Fly remains on demand."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 https://zamzam-api.fly.dev/health
+          curl --fail --silent --show-error --output /dev/null --retry 3 --retry-delay 2 https://zamzam-web.fly.dev/sessions

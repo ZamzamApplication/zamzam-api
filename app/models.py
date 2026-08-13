@@ -433,6 +433,11 @@ class Tahfiz(Base):
         nullable=False,
     )
     multiple_sessions_per_day_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    session_name_options: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(["الصباحية", "المسائية"], ensure_ascii=False),
+        nullable=False,
+    )
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

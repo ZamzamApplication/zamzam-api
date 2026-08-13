@@ -1669,6 +1669,12 @@ async def upload_student_pic(
 
 
 def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
+    try:
+        session_name_options = json.loads(tahfiz.session_name_options or "[]")
+    except (TypeError, json.JSONDecodeError):
+        session_name_options = []
+    if not isinstance(session_name_options, list):
+        session_name_options = []
     return {
         "id": tahfiz.id,
         "name": tahfiz.name,
@@ -1692,6 +1698,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "present_status": present_status_option(tahfiz),
         "absent_status": absent_status_option(tahfiz),
         "multiple_sessions_per_day_enabled": tahfiz.multiple_sessions_per_day_enabled is True,
+        "session_name_options": [name for name in session_name_options if isinstance(name, str) and name.strip()],
         "whatsend_enabled": tahfiz.whatsend_enabled,
         "whatsend_api_url": tahfiz.whatsend_api_url,
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
@@ -1830,6 +1837,14 @@ async def update_tahfiz_settings(
     ):
         tahfiz.multiple_sessions_per_day_enabled = body.multiple_sessions_per_day_enabled
         changed_fields.append("multiple_sessions_per_day_enabled")
+    if body.session_name_options is not None:
+        normalized_session_names = list(dict.fromkeys(name.strip() for name in body.session_name_options if name.strip()))
+        if len(normalized_session_names) > 20 or any(len(name) > 100 for name in normalized_session_names):
+            raise HTTPException(status_code=400, detail="Invalid session name options")
+        serialized_session_names = json.dumps(normalized_session_names, ensure_ascii=False)
+        if tahfiz.session_name_options != serialized_session_names:
+            tahfiz.session_name_options = serialized_session_names
+            changed_fields.append("session_name_options")
     requested_colors = body.attendance_status_colors or attendance_status_color_options(tahfiz)
     invalid_color = next(
         (color for color in requested_colors.values() if color not in ATTENDANCE_STATUS_COLOR_KEYS),

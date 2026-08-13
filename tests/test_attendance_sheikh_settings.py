@@ -57,6 +57,19 @@ def test_multiple_daily_sessions_default_off_and_can_be_enabled():
     assert request.multiple_sessions_per_day_enabled is True
 
 
+def test_session_name_options_are_serialized_and_accepted():
+    tahfiz = Tahfiz(
+        id=1,
+        name="اختبار",
+        status=TahfizStatus.active,
+        session_name_options='["صباحية", "مسائية"]',
+    )
+    request = UpdateTahfizSettingsRequest(session_name_options=[" صباحية ", "مسائية"])
+
+    assert serialize_tahfiz(tahfiz)["session_name_options"] == ["صباحية", "مسائية"]
+    assert request.session_name_options == [" صباحية ", "مسائية"]
+
+
 def test_excel_export_templates_default_for_existing_tahfiz():
     tahfiz = Tahfiz(id=1, name="اختبار", status=TahfizStatus.active)
 
