@@ -15,6 +15,7 @@ from app.routers.auth import (
     require_admin,
     require_tenant_admin,
 )
+from app.schemas import CreateTahfizRequest
 
 
 def make_tahfiz(tahfiz_id: int = 1, status: TahfizStatus = TahfizStatus.active) -> Tahfiz:
@@ -76,6 +77,16 @@ class _TenantSession:
 
 
 class AccessTokenTests(unittest.TestCase):
+    def test_tahfiz_creation_requires_valid_present_and_absent_mappings(self):
+        with self.assertRaises(ValueError):
+            CreateTahfizRequest(
+                name="اختبار",
+                attendance_statuses=["حاضر", "غياب"],
+                present_status="حاضر",
+                absent_status="حاضر",
+                session_name_options=["الصباحية"],
+            )
+
     def test_access_token_contains_identity_role_and_future_expiry(self):
         token = create_access_token({
             "sub": "teacher",

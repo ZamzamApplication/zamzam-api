@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import date
@@ -125,7 +126,14 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/auth/tahfiz",
             headers={**self.headers, "X-Tahfiz-ID": "1"},
-            json={"name": "تحفيظ جديد", "contact_phone": "01000000000"},
+            json={
+                "name": "تحفيظ جديد",
+                "contact_phone": "01000000000",
+                "attendance_statuses": ["موجود", "غائب", "بعذر"],
+                "present_status": "موجود",
+                "absent_status": "غائب",
+                "session_name_options": ["الفجر", "المغرب"],
+            },
         )
 
         self.assertEqual(response.status_code, 201, response.text)
@@ -136,6 +144,10 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
             membership = await db.get(UserTahfizMembership, response.json()["membership_id"])
             user = await db.get(User, 10)
             self.assertEqual(tahfiz.owner_user_id, 10)
+            self.assertEqual(json.loads(tahfiz.attendance_statuses), ["موجود", "غائب", "بعذر"])
+            self.assertEqual(tahfiz.present_status, "موجود")
+            self.assertEqual(tahfiz.absent_status, "غائب")
+            self.assertEqual(json.loads(tahfiz.session_name_options), ["الفجر", "المغرب"])
             self.assertEqual(membership.user_id, 10)
             self.assertEqual(membership.role, UserRole.admin)
             self.assertEqual(user.default_tahfiz_id, 1)

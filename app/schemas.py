@@ -50,14 +50,41 @@ class RevokeDeviceRequest(BaseModel):
     refresh_token: str = Field(min_length=32, max_length=500)
 
 
-class SignupRequest(BaseModel):
+class InitialTahfizSettingsRequest(BaseModel):
+    attendance_statuses: list[str] = Field(default_factory=lambda: ["حاضر", "غياب", "غياب بعذر", "لا ينطبق"], min_length=2, max_length=20)
+    present_status: str = Field(default="حاضر", min_length=1, max_length=50)
+    absent_status: str = Field(default="غياب", min_length=1, max_length=50)
+    session_name_options: list[str] = Field(default_factory=lambda: ["الصباحية", "المسائية"], min_length=1, max_length=20)
+
+    @field_validator("attendance_statuses", "session_name_options")
+    @classmethod
+    def normalize_initial_options(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values if value.strip()]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Options must be unique")
+        if any(len(value) > 50 for value in normalized):
+            raise ValueError("Options are too long")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_status_mappings(self):
+        self.present_status = self.present_status.strip()
+        self.absent_status = self.absent_status.strip()
+        if self.present_status not in self.attendance_statuses or self.absent_status not in self.attendance_statuses:
+            raise ValueError("Present and absent statuses must be included in attendance statuses")
+        if self.present_status == self.absent_status:
+            raise ValueError("Present and absent statuses must be different")
+        return self
+
+
+class SignupRequest(InitialTahfizSettingsRequest):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=200)
     tahfiz_name: str = Field(min_length=2, max_length=100)
     contact_phone: str | None = Field(default=None, max_length=20)
 
 
-class CreateTahfizRequest(BaseModel):
+class CreateTahfizRequest(InitialTahfizSettingsRequest):
     name: str = Field(min_length=2, max_length=100)
     contact_phone: str | None = Field(default=None, max_length=20)
 

@@ -52,6 +52,22 @@ DUMMY_PASSWORD_HASH = "$2b$12$4z4Ywktu8JVT1WHg0GCS0uccQT3JwUbOQPUK3UGo3xadxsaJvt
 __all__ = ["pwd_context"]
 
 
+def initial_tahfiz_settings(body: SignupRequest | CreateTahfizRequest) -> dict:
+    palette = ["green", "slate", "amber", "sky", "violet", "rose"]
+    colors = {status_name: palette[index % len(palette)] for index, status_name in enumerate(body.attendance_statuses)}
+    colors[body.present_status] = "green"
+    colors[body.absent_status] = "slate"
+    return {
+        "attendance_statuses": json.dumps(body.attendance_statuses, ensure_ascii=False),
+        "attendance_status_colors": json.dumps(colors, ensure_ascii=False),
+        "present_status": body.present_status,
+        "absent_status": body.absent_status,
+        "attendance_streak_status": body.absent_status,
+        "excused_absence_reset_statuses": json.dumps([body.present_status], ensure_ascii=False),
+        "session_name_options": json.dumps(body.session_name_options, ensure_ascii=False),
+    }
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -483,6 +499,7 @@ async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depen
         name=tahfiz_name,
         contact_phone=body.contact_phone,
         status=TahfizStatus.pending,
+        **initial_tahfiz_settings(body),
     )
     db.add(tahfiz)
     await db.flush()
@@ -534,6 +551,7 @@ async def create_linked_tahfiz(
         contact_phone=body.contact_phone.strip() or None if body.contact_phone else None,
         status=TahfizStatus.pending,
         owner_user_id=user.id,
+        **initial_tahfiz_settings(body),
     )
     db.add(tahfiz)
     await db.flush()
