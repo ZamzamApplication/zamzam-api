@@ -146,9 +146,19 @@ def plan_suggestion(plan: StudentQuranPlan) -> dict:
             "to_page": pages_to_end(start_page, plan.increment_amount),
         }
     start_surah, start_ayah = plan.next_surah or 1, plan.next_ayah or 1
+    lines_per_unit = {
+        WardIncrementUnit.juz: 300,
+        WardIncrementUnit.hizb: 150,
+        WardIncrementUnit.quarter: 38,
+        WardIncrementUnit.half_page: 8,
+    }
     end_surah, end_ayah = (
-        lines_to_end(start_surah, start_ayah, plan.increment_amount)
-        if plan.increment_unit == WardIncrementUnit.lines
+        lines_to_end(
+            start_surah,
+            start_ayah,
+            plan.increment_amount * lines_per_unit.get(plan.increment_unit, 1),
+        )
+        if plan.increment_unit != WardIncrementUnit.ayahs
         else ayahs_to_end(start_surah, start_ayah, plan.increment_amount)
     )
     return {

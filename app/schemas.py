@@ -891,7 +891,7 @@ class QuranProgressBatchRequest(BaseModel):
 
 class StudentQuranPlanInput(BaseModel):
     category: Literal["new_memorization", "recent_revision", "old_revision"]
-    increment_unit: Literal["ayahs", "lines", "pages"]
+    increment_unit: Literal["ayahs", "lines", "pages", "juz", "hizb", "quarter", "half_page"]
     increment_amount: int = Field(ge=1, le=604)
     next_surah: int | None = Field(default=None, ge=1, le=114)
     next_ayah: int | None = Field(default=None, ge=1)
@@ -903,7 +903,7 @@ class StudentQuranPlanInput(BaseModel):
             if self.next_page is None:
                 raise ValueError("Page plans require a starting page")
         elif self.next_surah is None or self.next_ayah is None:
-            raise ValueError("Ayah and line plans require a starting surah and ayah")
+            raise ValueError("Surah-based plans require a starting surah and ayah")
         return self
 
 

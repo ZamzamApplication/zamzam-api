@@ -341,6 +341,10 @@ class WardIncrementUnit(str, enum.Enum):
     ayahs = "ayahs"
     lines = "lines"
     pages = "pages"
+    juz = "juz"
+    hizb = "hizb"
+    quarter = "quarter"
+    half_page = "half_page"
 
 
 class StudentGoalStatus(str, enum.Enum):

@@ -92,6 +92,34 @@ class QuranRangeValidationTests(unittest.TestCase):
         ])
         self.assertEqual([plan.increment_unit for plan in request.plans], ["lines", "ayahs", "pages"])
 
+    def test_student_plans_support_named_hifz_units(self):
+        units = ["juz", "hizb", "quarter", "pages", "half_page"]
+        for unit in units:
+            request = StudentQuranPlansRequest(plans=[{
+                "category": "new_memorization",
+                "increment_unit": unit,
+                "increment_amount": 1,
+                "next_page": 1 if unit == "pages" else None,
+                "next_surah": None if unit == "pages" else 1,
+                "next_ayah": None if unit == "pages" else 1,
+            }])
+            self.assertEqual(request.plans[0].increment_unit, unit)
+
+    def test_half_page_suggestion_uses_eight_mushaf_lines(self):
+        plan = StudentQuranPlan(
+            id=3,
+            tahfiz_id=1,
+            student_id=3,
+            category=ProgressCategory.new_memorization,
+            increment_unit=WardIncrementUnit.half_page,
+            increment_amount=1,
+            next_surah=2,
+            next_ayah=6,
+        )
+        suggestion = plan_suggestion(plan)
+        self.assertEqual(suggestion["range_type"], "surah_ayah")
+        self.assertEqual((suggestion["from_surah"], suggestion["from_ayah"]), (2, 6))
+
     def test_page_plan_requires_starting_page(self):
         with self.assertRaises(ValidationError):
             StudentQuranPlansRequest(plans=[{
