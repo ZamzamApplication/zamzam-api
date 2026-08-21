@@ -20,6 +20,7 @@ from app.models import (
     DeviceSession,
     Tahfiz,
     TahfizStatus,
+    Sheikh,
     Student,
     User,
     UserRole,
@@ -142,6 +143,7 @@ class TenantContext:
     tahfiz: Tahfiz
     role: UserRole | None = None
     sheikh_id: int | None = None
+    attendance_all_students_access: bool = False
 
     @property
     def tahfiz_id(self) -> int:
@@ -158,11 +160,27 @@ class TenantContext:
             and self.tahfiz.restrict_sheikh_student_access is not False
         )
 
+    @property
+    def restricts_attendance_students(self) -> bool:
+        return self.restricts_sheikh_students and not self.attendance_all_students_access
+
 
 def student_scope_clause(context: TenantContext, student_model=Student):
     """Tenant and optional assigned-sheikh boundary for every student query."""
     clauses = [student_model.tahfiz_id == context.tahfiz_id]
     if context.restricts_sheikh_students:
+        clauses.append(
+            student_model.sheikh_id == context.sheikh_id
+            if context.sheikh_id is not None
+            else false()
+        )
+    return and_(*clauses)
+
+
+def attendance_student_scope_clause(context: TenantContext, student_model=Student):
+    """Student boundary used only while viewing or recording a session's attendance."""
+    clauses = [student_model.tahfiz_id == context.tahfiz_id]
+    if context.restricts_attendance_students:
         clauses.append(
             student_model.sheikh_id == context.sheikh_id
             if context.sheikh_id is not None
@@ -350,11 +368,20 @@ async def get_tenant_context(
                 details="Automatic audit from X-Tahfiz-ID support context",
             ))
             await db.commit()
+    attendance_all_students_access = False
+    if membership_role == UserRole.sheikh and membership_sheikh_id is not None:
+        attendance_all_students_access = bool(await db.scalar(select(
+            Sheikh.attendance_all_students_access
+        ).where(
+            Sheikh.id == membership_sheikh_id,
+            Sheikh.tahfiz_id == tahfiz.id,
+        )))
     return TenantContext(
         user=current_user,
         tahfiz=tahfiz,
         role=membership_role,
         sheikh_id=membership_sheikh_id,
+        attendance_all_students_access=attendance_all_students_access,
     )
 
 
@@ -635,6 +662,14 @@ async def get_me(
         else user.role
     )
     effective_sheikh_id = active_membership.sheikh_id if active_membership else user.sheikh_id
+    attendance_all_students_access = False
+    if effective_role == UserRole.sheikh and effective_sheikh_id is not None and tahfiz is not None:
+        attendance_all_students_access = bool(await db.scalar(select(
+            Sheikh.attendance_all_students_access
+        ).where(
+            Sheikh.id == effective_sheikh_id,
+            Sheikh.tahfiz_id == tahfiz.id,
+        )))
     capabilities = (
         ["platform_admin"]
         if effective_role == UserRole.super_admin
@@ -648,6 +683,7 @@ async def get_me(
         "role": effective_role.value,
         "global_role": user.role.value,
         "sheikh_id": effective_sheikh_id,
+        "attendance_all_students_access": attendance_all_students_access,
         "tahfiz_id": tahfiz.id if tahfiz else None,
         "default_tahfiz_id": user.default_tahfiz_id or user.tahfiz_id,
         "capabilities": capabilities,

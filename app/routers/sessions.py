@@ -288,9 +288,9 @@ async def get_session_attendance(
             Sheikh.tahfiz_id == session.tahfiz_id,
             *(
                 [Sheikh.id == context.sheikh_id]
-                if context.restricts_sheikh_students and context.sheikh_id is not None
+                if context.restricts_attendance_students and context.sheikh_id is not None
                 else [false()]
-                if context.restricts_sheikh_students
+                if context.restricts_attendance_students
                 else []
             ),
         )

@@ -434,6 +434,10 @@ async def migrate():
         sheikh_columns = {row[1] for row in result.fetchall()}
         if "whatsapp_group_id" not in sheikh_columns:
             await conn.execute(text("ALTER TABLE sheikhs ADD COLUMN whatsapp_group_id VARCHAR(255)"))
+        if "attendance_all_students_access" not in sheikh_columns:
+            await conn.execute(text(
+                "ALTER TABLE sheikhs ADD COLUMN attendance_all_students_access BOOLEAN NOT NULL DEFAULT 0"
+            ))
 
         # — Promote legacy organization settings to Tahfiz tenancy —
         result = await conn.execute(text("PRAGMA table_info(tahfiz)"))

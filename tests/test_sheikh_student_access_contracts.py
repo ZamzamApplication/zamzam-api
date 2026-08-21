@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.database import Base
 from app.models import Sheikh, Student, Tahfiz, TahfizStatus, User, UserRole
 from app.routers import attendance, management, progress, reports, sync
-from app.routers.auth import TenantContext, student_scope_clause
+from app.routers.auth import TenantContext, attendance_student_scope_clause, student_scope_clause
 from app.routers.management import serialize_tahfiz
 from app.schemas import UpdateTahfizSettingsRequest
 
@@ -21,6 +21,7 @@ def make_context(
     restricted: bool = True,
     tahfiz_id: int = 7,
     sheikh_id: int | None = 3,
+    attendance_all_students_access: bool = False,
 ) -> TenantContext:
     return TenantContext(
         user=User(
@@ -38,6 +39,7 @@ def make_context(
         ),
         role=role,
         sheikh_id=sheikh_id,
+        attendance_all_students_access=attendance_all_students_access,
     )
 
 
@@ -79,6 +81,46 @@ class SheikhStudentScopeTests(unittest.TestCase):
         sql, _ = self.compiled_scope(make_context(UserRole.sheikh, sheikh_id=None))
 
         self.assertIn("false", sql.lower())
+
+    def test_attendance_exception_only_opens_attendance_scope(self):
+        context = make_context(
+            UserRole.sheikh,
+            attendance_all_students_access=True,
+        )
+        general_sql = str(select(Student.id).where(student_scope_clause(context)).compile())
+        attendance_sql = str(select(Student.id).where(attendance_student_scope_clause(context)).compile())
+
+        self.assertIn("students.sheikh_id", general_sql)
+        self.assertNotIn("students.sheikh_id", attendance_sql)
+        self.assertTrue(context.restricts_sheikh_students)
+        self.assertFalse(context.restricts_attendance_students)
+
+    def test_attendance_exception_executes_with_tenant_boundary(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all([
+                Tahfiz(id=7, name="Scope", status=TahfizStatus.active),
+                Tahfiz(id=8, name="Other", status=TahfizStatus.active),
+                Sheikh(id=3, name="Assigned", tahfiz_id=7),
+                Sheikh(id=4, name="Other", tahfiz_id=7),
+                Student(id=31, name="Assigned student", tahfiz_id=7, sheikh_id=3),
+                Student(id=32, name="Other student", tahfiz_id=7, sheikh_id=4),
+                Student(id=33, name="Another tenant", tahfiz_id=8),
+            ])
+            db.commit()
+
+            context = make_context(UserRole.sheikh, attendance_all_students_access=True)
+            attendance_students = db.scalars(select(Student).where(
+                attendance_student_scope_clause(context)
+            )).all()
+            general_students = db.scalars(select(Student).where(
+                student_scope_clause(context)
+            )).all()
+
+            self.assertEqual([student.id for student in attendance_students], [31, 32])
+            self.assertEqual([student.id for student in general_students], [31])
+        engine.dispose()
 
     def test_scope_executes_as_assigned_only_and_toggle_can_restore_tenant_access(self):
         engine = create_engine("sqlite:///:memory:")
@@ -158,6 +200,33 @@ class SheikhStudentScopeMigrationTests(unittest.TestCase):
                 "SELECT restrict_sheikh_student_access FROM tahfiz WHERE id = 1"
             )).scalar_one()
             self.assertEqual(value, 1)
+        engine.dispose()
+
+    def test_attendance_exception_migration_is_secure_and_idempotent(self):
+        migration = importlib.import_module(
+            "migrations.versions.20260821_24_attendance_all_students_access"
+        )
+        engine = create_engine("sqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE sheikhs (id INTEGER PRIMARY KEY, name VARCHAR(100))"))
+            original_op = migration.op
+            migration.op = Operations(MigrationContext.configure(connection))
+            try:
+                migration.upgrade()
+                migration.upgrade()
+            finally:
+                migration.op = original_op
+
+            columns = {
+                column["name"]: column
+                for column in sa_inspect(connection).get_columns("sheikhs")
+            }
+            self.assertIn("attendance_all_students_access", columns)
+            connection.execute(text("INSERT INTO sheikhs (id, name) VALUES (1, 'Existing')"))
+            value = connection.execute(text(
+                "SELECT attendance_all_students_access FROM sheikhs WHERE id = 1"
+            )).scalar_one()
+            self.assertEqual(value, 0)
         engine.dispose()
 
 

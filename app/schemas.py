@@ -140,6 +140,7 @@ class SheikhOut(BaseModel):
     name: str
     phone: str | None = None
     whatsapp_group_id: str | None = None
+    attendance_all_students_access: bool = False
 
     class Config:
         from_attributes = True
@@ -349,6 +350,7 @@ class CreateSheikhRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=20)
     whatsapp_group_id: str | None = Field(default=None, max_length=255)
+    attendance_all_students_access: bool = False
     circle_id: int | None = None  # Legacy cached-client compatibility
 
 
@@ -518,6 +520,7 @@ class UpdateSheikhRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=20)
     whatsapp_group_id: str | None = Field(default=None, max_length=255)
+    attendance_all_students_access: bool | None = None
     circle_id: int | None = None  # Legacy cached-client compatibility
 
 

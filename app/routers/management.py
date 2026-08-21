@@ -662,6 +662,7 @@ async def list_sheikhs(
             "name": s.name,
             "phone": s.phone,
             "whatsapp_group_id": s.whatsapp_group_id,
+            "attendance_all_students_access": s.attendance_all_students_access is True,
             "tahfiz_id": s.tahfiz_id,
             "tahfiz_name": s.tahfiz.name,
             "circle_id": s.tahfiz_id,
@@ -679,10 +680,27 @@ async def create_sheikh(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
-    sheikh = Sheikh(name=body.name, phone=body.phone, whatsapp_group_id=body.whatsapp_group_id, tahfiz_id=context.tahfiz_id)
+    sheikh = Sheikh(
+        name=body.name,
+        phone=body.phone,
+        whatsapp_group_id=body.whatsapp_group_id,
+        attendance_all_students_access=body.attendance_all_students_access,
+        tahfiz_id=context.tahfiz_id,
+    )
     db.add(sheikh)
+    await db.flush()
+    if sheikh.attendance_all_students_access:
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="sheikh.attendance_access_updated",
+            details=json.dumps({
+                "sheikh_id": sheikh.id,
+                "attendance_all_students_access": True,
+            }, sort_keys=True),
+        ))
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "attendance_all_students_access": sheikh.attendance_all_students_access, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
 
 
 @router.put("/sheikhs/{sheikh_id}")
@@ -702,8 +720,22 @@ async def update_sheikh(
         sheikh.phone = body.phone
     if body.whatsapp_group_id is not None:
         sheikh.whatsapp_group_id = body.whatsapp_group_id
+    if (
+        body.attendance_all_students_access is not None
+        and sheikh.attendance_all_students_access != body.attendance_all_students_access
+    ):
+        sheikh.attendance_all_students_access = body.attendance_all_students_access
+        db.add(AuditLog(
+            actor_user_id=context.user.id,
+            tahfiz_id=context.tahfiz_id,
+            action="sheikh.attendance_access_updated",
+            details=json.dumps({
+                "sheikh_id": sheikh.id,
+                "attendance_all_students_access": body.attendance_all_students_access,
+            }, sort_keys=True),
+        ))
     await db.commit()
-    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
+    return {"id": sheikh.id, "name": sheikh.name, "phone": sheikh.phone, "whatsapp_group_id": sheikh.whatsapp_group_id, "attendance_all_students_access": sheikh.attendance_all_students_access, "tahfiz_id": sheikh.tahfiz_id, "circle_id": sheikh.tahfiz_id}
 
 
 async def sheikh_deletion_students(

@@ -25,7 +25,7 @@ from app.models import (
     User,
     WardIncrementUnit,
 )
-from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin, student_scope_clause
+from app.routers.auth import TenantContext, attendance_student_scope_clause, get_tenant_context, require_tenant_admin, student_scope_clause
 from app.schemas import (
     CreateStudentGoalRequest,
     QuranProgressBatchRequest,
@@ -285,7 +285,7 @@ async def session_progress(
         .where(
             QuranProgressEntry.session_id == session_id,
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
-            student_scope_clause(context),
+            attendance_student_scope_clause(context),
         )
         .order_by(QuranProgressEntry.student_id, QuranProgressEntry.category)
     )).scalars().all()
@@ -301,7 +301,7 @@ async def session_progress(
         .join(Student, Student.id == QuranProgressEntry.student_id)
         .where(
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
-            student_scope_clause(context),
+            attendance_student_scope_clause(context),
             or_(
                 Session.date < session.date,
                 and_(Session.date == session.date, Session.id < session.id),
@@ -321,7 +321,7 @@ async def session_progress(
         .join(Student, Student.id == StudentQuranPlan.student_id)
         .where(
             StudentQuranPlan.tahfiz_id == context.tahfiz_id,
-            student_scope_clause(context),
+            attendance_student_scope_clause(context),
         )
         .order_by(StudentQuranPlan.student_id, StudentQuranPlan.category)
     )).scalars().all()
@@ -358,7 +358,7 @@ async def save_session_progress(
     student_ids = {item.student_id for item in body.updates}
     valid_students = set((await db.execute(select(Student.id).where(
         Student.id.in_(student_ids),
-        student_scope_clause(context),
+        attendance_student_scope_clause(context),
     ))).scalars().all())
     if valid_students != student_ids:
         raise HTTPException(status_code=404, detail="One or more students were not found")
@@ -373,7 +373,7 @@ async def save_session_progress(
 
     sheikh_ids = {item.sheikh_id for item in body.updates if item.sheikh_id is not None}
     if sheikh_ids:
-        if context.restricts_sheikh_students and sheikh_ids != {context.sheikh_id}:
+        if context.restricts_attendance_students and sheikh_ids != {context.sheikh_id}:
             raise HTTPException(status_code=404, detail="One or more sheikhs were not found")
         valid_sheikhs = set((await db.execute(select(Sheikh.id).where(
             Sheikh.id.in_(sheikh_ids),
