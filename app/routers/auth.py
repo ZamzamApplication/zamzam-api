@@ -30,6 +30,7 @@ from app.models import (
     attendance_status_color_options,
     attendance_streak_status_option,
     present_status_option,
+    progress_category_options,
     excel_export_template_options,
     excused_absence_reset_status_options,
 )
@@ -71,6 +72,8 @@ def initial_tahfiz_settings(body: SignupRequest | CreateTahfizRequest) -> dict:
         "subscription_default_fee_minor": body.subscription_default_fee_minor,
         "subscription_currency": body.subscription_currency,
         "month_start_day": body.month_start_day,
+        "progress_tracking_enabled": body.progress_tracking_enabled,
+        "progress_categories": json.dumps(body.progress_categories),
     }
 
 
@@ -723,6 +726,7 @@ async def get_me(
             "sheikh_custom_fields_enabled": tahfiz.sheikh_custom_fields_enabled is True,
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
+            "progress_categories": progress_category_options(tahfiz),
         } if tahfiz else None),
     }
 

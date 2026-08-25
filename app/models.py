@@ -33,6 +33,8 @@ DEFAULT_ABSENT_STATUS = AttendanceStatus.absent.value
 DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
 DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
 DEFAULT_ATTENDANCE_STREAK_STATUS = AttendanceStatus.excused.value
+TRACKABLE_PROGRESS_CATEGORIES = ("new_memorization", "recent_revision", "old_revision")
+DEFAULT_PROGRESS_CATEGORIES = ["new_memorization"]
 ATTENDANCE_STATUS_COLOR_KEYS = ("green", "slate", "amber", "sky", "violet", "rose")
 DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.present.value: "green",
@@ -149,6 +151,21 @@ def attendance_status_options(tahfiz: "Tahfiz") -> list[str]:
         return DEFAULT_ATTENDANCE_STATUSES.copy()
     normalized = [value.strip() for value in values if isinstance(value, str) and value.strip()]
     return normalized or DEFAULT_ATTENDANCE_STATUSES.copy()
+
+
+def progress_category_options(tahfiz: "Tahfiz") -> list[str]:
+    try:
+        values = json.loads(tahfiz.progress_categories)
+    except (AttributeError, TypeError, ValueError):
+        return DEFAULT_PROGRESS_CATEGORIES.copy()
+    if not isinstance(values, list):
+        return DEFAULT_PROGRESS_CATEGORIES.copy()
+    normalized = list(dict.fromkeys(
+        value for value in values if value in TRACKABLE_PROGRESS_CATEGORIES
+    ))
+    if "new_memorization" not in normalized:
+        normalized.insert(0, "new_memorization")
+    return normalized
 
 
 def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
@@ -455,6 +472,11 @@ class Tahfiz(Base):
     whatsend_api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     whatsend_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     progress_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    progress_categories: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_PROGRESS_CATEGORIES),
+        nullable=False,
+    )
     subscriptions_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     subscription_default_fee_minor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     subscription_currency: Mapped[str] = mapped_column(String(3), default="EGP", nullable=False)
@@ -574,6 +596,7 @@ class Student(Base):
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     subscription_fee_override_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quran_progress_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     sheikh: Mapped[Sheikh | None] = relationship("Sheikh", back_populates="students")
     attendance_records: Mapped[list["Attendance"]] = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
@@ -909,6 +932,7 @@ class StudentQuranPlan(Base):
     next_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_advanced_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_advanced_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

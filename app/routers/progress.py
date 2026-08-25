@@ -24,6 +24,7 @@ from app.models import (
     StudentQuranPlan,
     User,
     WardIncrementUnit,
+    progress_category_options,
 )
 from app.routers.auth import TenantContext, attendance_student_scope_clause, get_tenant_context, require_tenant_admin, student_scope_clause
 from app.schemas import (
@@ -45,7 +46,17 @@ def ensure_enabled(context: TenantContext) -> None:
 
 
 def should_advance_plan(plan: StudentQuranPlan | None, session_date: date, existing: QuranProgressEntry | None) -> bool:
-    return plan is not None and existing is None and plan.last_advanced_on != session_date
+    return plan is not None and existing is None and plan.completed_at is None
+
+
+def progress_starts_at_plan(plan: StudentQuranPlan, item) -> bool:
+    if plan.increment_unit == WardIncrementUnit.pages:
+        return item.range_type == QuranRangeType.page.value and item.from_page == plan.next_page
+    return (
+        item.range_type == QuranRangeType.surah_ayah.value
+        and item.from_surah == plan.next_surah
+        and item.from_ayah == plan.next_ayah
+    )
 
 
 def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None) -> dict:
@@ -120,6 +131,7 @@ def serialize_plan(plan: StudentQuranPlan) -> dict:
         "next_surah": plan.next_surah,
         "next_ayah": plan.next_ayah,
         "next_page": plan.next_page,
+        "completed_at": plan.completed_at.isoformat() if plan.completed_at else None,
         "updated_at": plan.updated_at.isoformat(),
     }
 
@@ -180,7 +192,7 @@ async def student_quran_plans(
     context: TenantContext = Depends(get_tenant_context),
 ):
     ensure_enabled(context)
-    student = await db.scalar(select(Student.id).where(
+    student = await db.scalar(select(Student).where(
         Student.id == student_id,
         student_scope_clause(context),
     ))
@@ -194,7 +206,11 @@ async def student_quran_plans(
         )
         .order_by(StudentQuranPlan.category)
     )).scalars().all()
-    return {"plans": [serialize_plan(plan) for plan in plans]}
+    return {
+        "plans": [serialize_plan(plan) for plan in plans],
+        "student_enabled": student.quran_progress_enabled,
+        "categories": progress_category_options(context.tahfiz),
+    }
 
 
 @router.put("/students/{student_id}/quran-plans")
@@ -205,12 +221,17 @@ async def update_student_quran_plans(
     context: TenantContext = Depends(require_tenant_admin),
 ):
     ensure_enabled(context)
-    student = await db.scalar(select(Student.id).where(
+    student = await db.scalar(select(Student).where(
         Student.id == student_id,
         Student.tahfiz_id == context.tahfiz_id,
     ))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    if not student.quran_progress_enabled:
+        raise HTTPException(status_code=409, detail={"code": "student_progress_disabled"})
+    enabled_categories = set(progress_category_options(context.tahfiz))
+    if any(item.category not in enabled_categories for item in body.plans):
+        raise HTTPException(status_code=422, detail={"code": "progress_category_disabled"})
     existing = (await db.execute(select(StudentQuranPlan).where(
         StudentQuranPlan.student_id == student_id,
         StudentQuranPlan.tahfiz_id == context.tahfiz_id,
@@ -236,6 +257,7 @@ async def update_student_quran_plans(
         plan.next_surah = item.next_surah if item.increment_unit != "pages" else None
         plan.next_ayah = item.next_ayah if item.increment_unit != "pages" else None
         plan.next_page = item.next_page if item.increment_unit == "pages" else None
+        plan.completed_at = None
         plan.updated_at = utcnow()
         try:
             plan_suggestion(plan)
@@ -278,7 +300,13 @@ async def session_progress(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if not context.tahfiz.progress_tracking_enabled or not session.quran_progress_enabled:
-        return {"enabled": False, "entries": [], "previous_entries": [], "suggested_entries": []}
+        return {
+            "enabled": False,
+            "entries": [],
+            "previous_entries": [],
+            "suggested_entries": [],
+            "categories": progress_category_options(context.tahfiz),
+        }
     entries = (await db.execute(
         select(QuranProgressEntry)
         .join(Student, Student.id == QuranProgressEntry.student_id)
@@ -316,11 +344,15 @@ async def session_progress(
             )
         )
     )).scalars().all()
+    enabled_categories = progress_category_options(context.tahfiz)
     plans = (await db.execute(
         select(StudentQuranPlan)
         .join(Student, Student.id == StudentQuranPlan.student_id)
         .where(
             StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+            StudentQuranPlan.category.in_(enabled_categories),
+            StudentQuranPlan.completed_at.is_(None),
+            Student.quran_progress_enabled.is_(True),
             attendance_student_scope_clause(context),
         )
         .order_by(StudentQuranPlan.student_id, StudentQuranPlan.category)
@@ -330,6 +362,7 @@ async def session_progress(
         "entries": [serialize_entry(entry) for entry in entries],
         "previous_entries": [serialize_entry(entry) for entry in previous_rows],
         "suggested_entries": [plan_suggestion(plan) for plan in plans],
+        "categories": enabled_categories,
     }
 
 
@@ -358,6 +391,7 @@ async def save_session_progress(
     student_ids = {item.student_id for item in body.updates}
     valid_students = set((await db.execute(select(Student.id).where(
         Student.id.in_(student_ids),
+        Student.quran_progress_enabled.is_(True),
         attendance_student_scope_clause(context),
     ))).scalars().all())
     if valid_students != student_ids:
@@ -396,6 +430,7 @@ async def save_session_progress(
         StudentQuranPlan.tahfiz_id == context.tahfiz_id,
     ))).scalars().all()
     plans_by_key = {(plan.student_id, plan.category.value): plan for plan in plans}
+    enabled_categories = set(progress_category_options(context.tahfiz))
     changed_records: list[dict] = []
     for item in body.updates:
         try:
@@ -403,6 +438,8 @@ async def save_session_progress(
             range_type = QuranRangeType(item.range_type)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid progress category or range type")
+        if category != ProgressCategory.test and category.value not in enabled_categories:
+            raise HTTPException(status_code=422, detail={"code": "progress_category_disabled"})
         values = {
             "tahfiz_id": context.tahfiz_id,
             "session_id": session_id,
@@ -454,15 +491,21 @@ async def save_session_progress(
         )
         await db.execute(statement)
         plan = plans_by_key.get((item.student_id, category.value))
-        if should_advance_plan(plan, session.date, existing):
+        if should_advance_plan(plan, session.date, existing) and progress_starts_at_plan(plan, item):
             if plan.increment_unit == WardIncrementUnit.pages:
                 if range_type != QuranRangeType.page or item.to_page is None:
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
-                plan.next_page = min(item.to_page + 1, 604)
+                if item.to_page >= 604:
+                    plan.completed_at = utcnow()
+                else:
+                    plan.next_page = item.to_page + 1
             else:
                 if range_type != QuranRangeType.surah_ayah or item.to_surah is None or item.to_ayah is None:
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
-                plan.next_surah, plan.next_ayah = next_ayah(item.to_surah, item.to_ayah)
+                if item.to_surah == 114 and item.to_ayah == 6:
+                    plan.completed_at = utcnow()
+                else:
+                    plan.next_surah, plan.next_ayah = next_ayah(item.to_surah, item.to_ayah)
             plan.last_advanced_session_id = session_id
             plan.last_advanced_on = session.date
             plan.updated_at = utcnow()

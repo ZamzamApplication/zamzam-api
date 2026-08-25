@@ -51,7 +51,7 @@ class MultipleDailySessionsTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([self.tahfiz, self.user, Sheikh(id=20, name="الشيخ", tahfiz_id=1)])
             await db.flush()
             db.add_all([
-                Student(id=101, name="الأول", tahfiz_id=1, sheikh_id=20),
+                Student(id=101, name="الأول", tahfiz_id=1, sheikh_id=20, quran_progress_enabled=True),
                 Student(id=102, name="الثاني", tahfiz_id=1, sheikh_id=20),
                 Student(id=103, name="الثالث", tahfiz_id=1, sheikh_id=20),
                 StudentCategory(id=30, tahfiz_id=1, name="صباحي"),
@@ -121,7 +121,7 @@ class MultipleDailySessionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["student_ids"], [102, 103])
         self.assertEqual(updated["version"], 1)
 
-    async def test_quran_plan_advances_only_once_for_same_day(self):
+    async def test_quran_plan_advances_for_each_session_on_same_day(self):
         base = {
             "student_id": 101,
             "category": "new_memorization",
@@ -148,7 +148,7 @@ class MultipleDailySessionsTests(unittest.IsolatedAsyncioTestCase):
                 context=self.context,
             )
             plan = await db.scalar(select(StudentQuranPlan).where(StudentQuranPlan.student_id == 101))
-        self.assertEqual((plan.next_surah, plan.next_ayah), (2, 6))
+        self.assertEqual((plan.next_surah, plan.next_ayah), (2, 11))
         self.assertEqual(plan.last_advanced_on, date(2026, 8, 11))
 
     async def test_disabled_setting_rejects_second_session_on_date(self):

@@ -59,6 +59,10 @@ class InitialTahfizSettingsRequest(BaseModel):
     subscription_default_fee_minor: int = Field(default=0, ge=0)
     subscription_currency: str = Field(default="EGP", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
     month_start_day: int = Field(default=1, ge=1, le=28)
+    progress_tracking_enabled: bool = False
+    progress_categories: list[Literal["new_memorization", "recent_revision", "old_revision"]] = Field(
+        default_factory=lambda: ["new_memorization"], min_length=1, max_length=3
+    )
 
     @field_validator("attendance_statuses", "session_name_options")
     @classmethod
@@ -82,6 +86,15 @@ class InitialTahfizSettingsRequest(BaseModel):
         if self.subscriptions_enabled and self.subscription_default_fee_minor <= 0:
             raise ValueError("A positive default monthly fee is required when subscriptions are enabled")
         return self
+
+    @field_validator("progress_categories")
+    @classmethod
+    def unique_progress_categories(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("Progress categories must be unique")
+        if "new_memorization" not in values:
+            raise ValueError("New memorization must remain enabled")
+        return values
 
 
 class SignupRequest(InitialTahfizSettingsRequest):
@@ -365,6 +378,7 @@ class CreateStudentRequest(BaseModel):
     parent_phones: list[CreateParentPhone] = Field(default_factory=list, max_length=20)
     category_ids: list[int] = Field(default_factory=list, max_length=100)
     custom_field_values: dict[int, str | bool | int | float | None] = Field(default_factory=dict, max_length=100)
+    quran_progress_enabled: bool = False
 
     @field_validator("category_ids")
     @classmethod
@@ -536,6 +550,7 @@ class UpdateStudentRequest(BaseModel):
     parent_phones: list[UpdateParentPhone] | None = Field(default=None, max_length=20)
     category_ids: list[int] | None = Field(default=None, max_length=100)
     custom_field_values: dict[int, str | bool | int | float | None] | None = Field(default=None, max_length=100)
+    quran_progress_enabled: bool | None = None
 
     @field_validator("category_ids")
     @classmethod
@@ -720,10 +735,22 @@ class UpdateTahfizSettingsRequest(BaseModel):
     whatsend_api_key: str | None = Field(default=None, max_length=1000)
     whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
+    progress_categories: list[Literal["new_memorization", "recent_revision", "old_revision"]] | None = Field(default=None, min_length=1, max_length=3)
     subscriptions_enabled: bool | None = None
     subscription_default_fee_minor: int | None = Field(default=None, ge=0)
     subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
     expense_categories: list[ExpenseCategorySetting] | None = Field(default=None, min_length=1, max_length=30)
+
+    @field_validator("progress_categories")
+    @classmethod
+    def validate_progress_categories(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return values
+        if len(values) != len(set(values)):
+            raise ValueError("Progress categories must be unique")
+        if "new_memorization" not in values:
+            raise ValueError("New memorization must remain enabled")
+        return values
 
 
 class AuditLogActorOut(BaseModel):

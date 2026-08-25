@@ -8,7 +8,7 @@ from app.models import ProgressCategory, Session, StudentQuranPlan, Tahfiz, Tahf
 from app.routers.auth import TenantContext
 from app.routers.progress import ensure_enabled, plan_suggestion, session_progress, should_advance_plan, student_progress
 from app.routers.sessions import session_status, session_summary, update_session_progress_tracking
-from app.schemas import CreateStudentGoalRequest, QuranProgressItem, SessionQuranProgressRequest, StudentQuranPlansRequest
+from app.schemas import CreateStudentGoalRequest, InitialTahfizSettingsRequest, QuranProgressItem, SessionQuranProgressRequest, StudentQuranPlansRequest, UpdateTahfizSettingsRequest
 
 
 def make_context(*, enabled: bool) -> TenantContext:
@@ -78,11 +78,25 @@ class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
 
 
 class QuranRangeValidationTests(unittest.TestCase):
-    def test_plan_advances_only_once_per_calendar_date(self):
+    def test_hifz_is_the_only_default_progress_category(self):
+        request = InitialTahfizSettingsRequest()
+
+        self.assertEqual(request.progress_categories, ["new_memorization"])
+
+    def test_hifz_category_cannot_be_removed(self):
+        with self.assertRaises(ValidationError):
+            UpdateTahfizSettingsRequest(progress_categories=["recent_revision"])
+
+    def test_plan_advances_for_each_new_entry_even_on_same_date(self):
         plan = StudentQuranPlan(last_advanced_on=date(2026, 8, 11))
 
-        self.assertFalse(should_advance_plan(plan, date(2026, 8, 11), None))
-        self.assertTrue(should_advance_plan(plan, date(2026, 8, 12), None))
+        self.assertTrue(should_advance_plan(plan, date(2026, 8, 11), None))
+        self.assertFalse(should_advance_plan(plan, date(2026, 8, 12), object()))
+
+    def test_completed_plan_does_not_advance(self):
+        plan = StudentQuranPlan(completed_at=datetime(2026, 8, 11))
+
+        self.assertFalse(should_advance_plan(plan, date(2026, 8, 12), None))
 
     def test_student_plans_support_independent_units(self):
         request = StudentQuranPlansRequest(plans=[

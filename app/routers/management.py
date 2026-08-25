@@ -61,6 +61,7 @@ from app.models import (
     attendance_status_color_options,
     attendance_streak_status_option,
     present_status_option,
+    progress_category_options,
     ATTENDANCE_STATUS_COLOR_KEYS,
     DEFAULT_EXCEL_EXPORT_TEMPLATES,
     excel_export_template_options,
@@ -1053,6 +1054,7 @@ async def get_sheikh_students(
             "excused_weekdays": ew_map.get(r.id, []),
             "categories": serialize_student_categories(r),
             "category_ids": [item["id"] for item in serialize_student_categories(r)],
+            "quran_progress_enabled": r.quran_progress_enabled,
         }
         for r in records
     ]
@@ -1140,6 +1142,7 @@ async def list_students(
             "categories": serialize_student_categories(s),
             "category_ids": [item["id"] for item in serialize_student_categories(s)],
             "custom_field_values": custom_values_by_student.get(s.id, {}),
+            "quran_progress_enabled": s.quran_progress_enabled,
         }
         for s in students
     ]
@@ -1225,6 +1228,7 @@ async def student_profile(
         "categories": serialize_student_categories(student),
         "category_ids": [item["id"] for item in serialize_student_categories(student)],
         "custom_field_values": {str(row.field_id): row.value for row in custom_value_rows},
+        "quran_progress_enabled": student.quran_progress_enabled,
         "excused_weekdays": [
             {"id": row.id, "weekday": row.weekday, "note": row.note}
             for row in sorted(student.excused_weekdays, key=lambda row: row.weekday)
@@ -1258,6 +1262,8 @@ async def student_profile(
         },
         "progress": {
             "enabled": context.tahfiz.progress_tracking_enabled,
+            "student_enabled": student.quran_progress_enabled,
+            "categories": progress_category_options(context.tahfiz),
             "entries": int(progress_count),
             "average_quality": round(float(average_quality), 1),
             "active_goals": active_goals,
@@ -1285,6 +1291,7 @@ async def create_student(
         registration_date=body.registration_date or date.today(),
         sheikh_id=body.sheikh_id,
         tahfiz_id=context.tahfiz_id,
+        quran_progress_enabled=body.quran_progress_enabled,
     )
     db.add(student)
     await db.flush()
@@ -1344,6 +1351,8 @@ async def update_student(
         student.status = StudentStatus(body.status)
     if body.registration_date is not None:
         student.registration_date = body.registration_date
+    if body.quran_progress_enabled is not None:
+        student.quran_progress_enabled = body.quran_progress_enabled
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
         if not sheikh:
@@ -1985,6 +1994,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "whatsend_groups_url": tahfiz.whatsend_groups_url,
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
         "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
+        "progress_categories": progress_category_options(tahfiz),
         "subscriptions_enabled": tahfiz.subscriptions_enabled,
         "subscription_default_fee_minor": tahfiz.subscription_default_fee_minor,
         "subscription_currency": tahfiz.subscription_currency,
@@ -2270,6 +2280,12 @@ async def update_tahfiz_settings(
     if body.progress_tracking_enabled is not None and tahfiz.progress_tracking_enabled != body.progress_tracking_enabled:
         tahfiz.progress_tracking_enabled = body.progress_tracking_enabled
         changed_fields.append("progress_tracking_enabled")
+    if body.progress_categories is not None:
+        normalized_progress_categories = list(dict.fromkeys(body.progress_categories))
+        serialized_progress_categories = json.dumps(normalized_progress_categories)
+        if tahfiz.progress_categories != serialized_progress_categories:
+            tahfiz.progress_categories = serialized_progress_categories
+            changed_fields.append("progress_categories")
     next_subscription_fee = (
         body.subscription_default_fee_minor
         if body.subscription_default_fee_minor is not None

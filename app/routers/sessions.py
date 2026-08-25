@@ -367,6 +367,7 @@ async def get_session_attendance(
                 "status": status,
                 "notes": notes,
                 "sheikh_id": att_sheikh_id,
+                "quran_progress_enabled": s.quran_progress_enabled,
             })
 
         sheikh_groups.append({
