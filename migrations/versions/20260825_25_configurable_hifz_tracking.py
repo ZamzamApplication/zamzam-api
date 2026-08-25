@@ -1,7 +1,7 @@
 """Add configurable, per-student Hifz tracking.
 
-Revision ID: 20260825_24
-Revises: 20260818_23
+Revision ID: 20260825_25
+Revises: 20260821_24
 """
 
 import json
@@ -10,8 +10,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260825_24"
-down_revision = "20260818_23"
+revision = "20260825_25"
+down_revision = "20260821_24"
 branch_labels = None
 depends_on = None
 

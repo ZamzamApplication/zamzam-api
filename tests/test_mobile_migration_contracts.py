@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, inspect, text
 
 class MobileMigrationUpgradeTests(unittest.TestCase):
     def test_configurable_hifz_tracking_preserves_existing_users(self):
-        migration = importlib.import_module("migrations.versions.20260825_24_configurable_hifz_tracking")
+        migration = importlib.import_module("migrations.versions.20260825_25_configurable_hifz_tracking")
         engine = create_engine("sqlite:///:memory:")
         with engine.begin() as connection:
             connection.execute(text("CREATE TABLE tahfiz (id INTEGER PRIMARY KEY)"))
