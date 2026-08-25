@@ -52,7 +52,7 @@ class TenantSwitchingE2ETests(unittest.IsolatedAsyncioTestCase):
             db.add_all([
                 UserTahfizMembership(user_id=10, tahfiz_id=1, role=UserRole.admin, is_active=True),
                 UserTahfizMembership(user_id=10, tahfiz_id=2, role=UserRole.admin, is_active=True),
-                Student(id=101, name="طالب الأولى", tahfiz_id=1),
+                Student(id=101, name="طالب الأولى", tahfiz_id=1, quran_progress_enabled=True),
                 Student(id=102, name="طالب الثانية", tahfiz_id=2),
                 Session(id=201, date=date(2026, 7, 23), tahfiz_id=1),
                 Session(id=202, date=date(2026, 7, 24), tahfiz_id=2),
