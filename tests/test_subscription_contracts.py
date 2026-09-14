@@ -1,6 +1,6 @@
 import inspect
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -56,13 +56,13 @@ class SubscriptionPeriodTests(unittest.TestCase):
         self.assertEqual(serialized["sheikh_id"], 8)
         self.assertIn("payment_date", serialized)
 
-    def test_paid_inactive_students_remain_in_period_while_unpaid_inactive_students_do_not(self):
+    def test_past_inactive_bills_remain_but_current_unpaid_inactive_bills_do_not(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
-        period_start = date(2026, 7, 21)
-        period_end = date(2026, 8, 20)
+        current_start, current_end = subscriptions.monthly_period(date.today(), 1)
+        past_start, past_end = subscriptions.monthly_period(current_start - timedelta(days=1), 1)
         with Session(engine) as db:
-            tahfiz = Tahfiz(name="اختبار")
+            tahfiz = Tahfiz(name="اختبار", month_start_day=1)
             db.add(tahfiz)
             db.flush()
             active = Student(name="مقيد", status=StudentStatus.enrolled, tahfiz_id=tahfiz.id)
@@ -71,52 +71,92 @@ class SubscriptionPeriodTests(unittest.TestCase):
             db.flush()
             common = {
                 "tahfiz_id": tahfiz.id,
-                "period_start": period_start,
-                "period_end": period_end,
                 "amount_due_minor": 30000,
                 "currency": "EGP",
             }
             db.add_all([
                 StudentSubscription(
                     **common,
-                    student_id=active.id,
-                    student_snapshot_id=active.id,
-                    student_name="active unpaid",
+                    period_start=past_start,
+                    period_end=past_end,
+                    student_id=inactive.id,
+                    student_snapshot_id=inactive.id,
+                    student_name="past inactive unpaid",
                     is_paid=False,
                 ),
                 StudentSubscription(
                     **common,
+                    period_start=past_start,
+                    period_end=past_end,
                     student_id=inactive.id,
-                    student_snapshot_id=inactive.id,
-                    student_name="inactive paid",
+                    student_snapshot_id=inactive.id + 100,
+                    student_name="past inactive paid",
                     is_paid=True,
-                    payment_date=date(2026, 8, 6),
+                    payment_date=past_end,
                     payment_method="cash",
                 ),
                 StudentSubscription(
                     **common,
+                    period_start=current_start,
+                    period_end=current_end,
+                    student_id=active.id,
+                    student_snapshot_id=active.id,
+                    student_name="current active unpaid",
+                    is_paid=False,
+                ),
+                StudentSubscription(
+                    **common,
+                    period_start=current_start,
+                    period_end=current_end,
+                    student_id=inactive.id,
+                    student_snapshot_id=inactive.id,
+                    student_name="current inactive paid",
+                    is_paid=True,
+                    payment_date=date.today(),
+                    payment_method="cash",
+                ),
+                StudentSubscription(
+                    **common,
+                    period_start=current_start,
+                    period_end=current_end,
                     student_id=inactive.id,
                     student_snapshot_id=inactive.id + 100,
-                    student_name="inactive unpaid",
+                    student_name="current inactive unpaid",
                     is_paid=False,
                 ),
             ])
             db.commit()
 
+            context = SimpleNamespace(
+                tahfiz_id=tahfiz.id,
+                tahfiz=SimpleNamespace(month_start_day=1),
+            )
             statement = subscriptions.filtered_statement(
-                SimpleNamespace(tahfiz_id=tahfiz.id),
-                period_start,
+                context,
+                past_start,
                 None,
                 None,
                 None,
                 None,
             )
-            rows = db.scalars(statement).all()
+            past_rows = db.scalars(statement).all()
+            current_rows = db.scalars(subscriptions.filtered_statement(
+                context,
+                current_start,
+                None,
+                None,
+                None,
+                None,
+            )).all()
 
         engine.dispose()
         self.assertEqual(
-            {(row.student_name, row.is_paid) for row in rows},
-            {("active unpaid", False), ("inactive paid", True)},
+            {(row.student_name, row.is_paid) for row in past_rows},
+            {("past inactive unpaid", False), ("past inactive paid", True)},
+        )
+        self.assertEqual(
+            {(row.student_name, row.is_paid) for row in current_rows},
+            {("current active unpaid", False), ("current inactive paid", True)},
         )
 
 
@@ -220,18 +260,20 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(sessions))
         self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(reports))
 
-    def test_financial_views_keep_paid_inactive_students_but_exclude_unpaid_ones(self):
+    def test_financial_views_keep_past_bills_and_paid_current_inactive_students(self):
         condition_source = inspect.getsource(subscriptions.reportable_subscription_condition)
+        self.assertIn("StudentSubscription.period_start < current_period_start", condition_source)
         self.assertIn("Student.status == StudentStatus.enrolled", condition_source)
         self.assertIn("StudentSubscription.is_paid.is_(True)", condition_source)
         self.assertIn("or_(", condition_source)
-        self.assertIn("reportable_subscription_condition()", inspect.getsource(subscriptions.filtered_statement))
-        self.assertIn("reportable_subscription_condition()", inspect.getsource(finance.overview))
+        self.assertIn("reportable_subscription_condition(current_period_start)", inspect.getsource(subscriptions.filtered_statement))
+        self.assertIn("reportable_subscription_condition(current_start)", inspect.getsource(finance.overview))
 
-    def test_student_deletion_removes_unpaid_subscriptions(self):
+    def test_student_deletion_removes_only_the_current_unpaid_subscription(self):
         source = inspect.getsource(management.delete_student_entity)
         self.assertIn("sa_delete(StudentSubscription)", source)
         self.assertIn("StudentSubscription.is_paid.is_(False)", source)
+        self.assertIn("StudentSubscription.period_start == monthly_period", source)
         self.assertIn("values(student_id=None)", source)
 
     def test_management_preserves_history_and_locks_month_start(self):

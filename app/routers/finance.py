@@ -109,7 +109,7 @@ async def overview(
     )).where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.period_start == start,
-        reportable_subscription_condition(),
+        reportable_subscription_condition(current_start),
     ))).all()
     expected = sum(row.amount_due_minor for row in subscription_rows)
     collected_for_bills = sum(row.amount_due_minor for row in subscription_rows if row.is_paid)

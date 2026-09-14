@@ -23,9 +23,10 @@ from app.time import utcnow
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 
-def reportable_subscription_condition():
-    """Keep paid history while excluding inactive students' unpaid bills."""
+def reportable_subscription_condition(current_period_start: date):
+    """Keep past bills intact and exclude only current unpaid inactive bills."""
     return or_(
+        StudentSubscription.period_start < current_period_start,
         Student.status == StudentStatus.enrolled,
         StudentSubscription.is_paid.is_(True),
     )
@@ -166,6 +167,7 @@ async def tenant_record(
     context: TenantContext,
     record_id: int,
 ) -> StudentSubscription:
+    current_period_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
     record = (await db.execute(
         select(StudentSubscription)
         .outerjoin(Student, and_(
@@ -175,7 +177,7 @@ async def tenant_record(
         .where(
         StudentSubscription.id == record_id,
         StudentSubscription.tahfiz_id == context.tahfiz_id,
-        reportable_subscription_condition(),
+        reportable_subscription_condition(current_period_start),
     ))).scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="Subscription record not found")
@@ -190,6 +192,7 @@ def filtered_statement(
     student_id: int | None,
     search: str | None,
 ):
+    current_period_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
     statement = select(StudentSubscription).outerjoin(
         Student,
         and_(
@@ -199,7 +202,7 @@ def filtered_statement(
     ).where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.period_start == period,
-        reportable_subscription_condition(),
+        reportable_subscription_condition(current_period_start),
     )
     if paid is True:
         statement = statement.where(StudentSubscription.is_paid.is_(True))

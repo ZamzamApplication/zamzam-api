@@ -69,7 +69,11 @@ from app.models import (
     excused_absence_reset_status_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, pwd_context, require_super_admin, require_tenant_admin, student_scope_clause
-from app.routers.subscriptions import ensure_current_subscription_records, serialize_record as serialize_subscription_record
+from app.routers.subscriptions import (
+    ensure_current_subscription_records,
+    monthly_period,
+    serialize_record as serialize_subscription_record,
+)
 from app.schemas import (
     CreateParentPhone,
     CreateExcusedPeriodRequest,
@@ -765,6 +769,7 @@ async def delete_student_entity(
     db: AsyncSession,
     student: Student,
     tahfiz_id: int,
+    month_start_day: int,
     *,
     delete_attendance: bool,
 ) -> None:
@@ -776,6 +781,7 @@ async def delete_student_entity(
         StudentSubscription.student_id == student.id,
         StudentSubscription.tahfiz_id == tahfiz_id,
         StudentSubscription.is_paid.is_(False),
+        StudentSubscription.period_start == monthly_period(date.today(), month_start_day)[0],
     ))
     await db.execute(sa_update(StudentSubscription).where(
         StudentSubscription.student_id == student.id,
@@ -864,7 +870,11 @@ async def finalize_sheikh_deletion(
             ))
         else:
             await delete_student_entity(
-                db, student, context.tahfiz_id, delete_attendance=True
+                db,
+                student,
+                context.tahfiz_id,
+                context.tahfiz.month_start_day,
+                delete_attendance=True,
             )
             deleted += 1
             db.add(AuditLog(
@@ -1379,6 +1389,14 @@ async def update_student(
 
     if context.tahfiz.subscriptions_enabled and student.status == StudentStatus.enrolled:
         await ensure_current_subscription_records(db, context)
+    elif body.status is not None:
+        current_period_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
+        await db.execute(sa_delete(StudentSubscription).where(
+            StudentSubscription.student_id == student.id,
+            StudentSubscription.tahfiz_id == context.tahfiz_id,
+            StudentSubscription.period_start == current_period_start,
+            StudentSubscription.is_paid.is_(False),
+        ))
 
     await db.commit()
     return {"id": student.id, "name": student.name}
@@ -1404,7 +1422,11 @@ async def delete_student(
         raise HTTPException(status_code=404, detail="Student not found")
 
     await delete_student_entity(
-        db, student, context.tahfiz_id, delete_attendance=delete_sessions
+        db,
+        student,
+        context.tahfiz_id,
+        context.tahfiz.month_start_day,
+        delete_attendance=delete_sessions,
     )
 
     db.add(AuditLog(
