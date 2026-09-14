@@ -1,13 +1,17 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AuditLog, Expense, Student, StudentStatus, StudentSubscription, expense_category_options
+from app.models import AuditLog, Expense, Student, StudentSubscription, expense_category_options
 from app.routers.auth import TenantContext, require_tenant_admin
-from app.routers.subscriptions import ensure_current_subscription_records, monthly_period
+from app.routers.subscriptions import (
+    ensure_current_subscription_records,
+    monthly_period,
+    reportable_subscription_condition,
+)
 from app.schemas import ExpenseRequest
 from app.time import utcnow
 
@@ -99,11 +103,13 @@ async def overview(
     subscription_rows = (await db.execute(select(
         StudentSubscription.amount_due_minor,
         StudentSubscription.is_paid,
-    ).join(Student, Student.id == StudentSubscription.student_id).where(
+    ).outerjoin(Student, and_(
+        Student.id == StudentSubscription.student_id,
+        Student.tahfiz_id == context.tahfiz_id,
+    )).where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.period_start == start,
-        Student.tahfiz_id == context.tahfiz_id,
-        Student.status == StudentStatus.enrolled,
+        reportable_subscription_condition(),
     ))).all()
     expected = sum(row.amount_due_minor for row in subscription_rows)
     collected_for_bills = sum(row.amount_due_minor for row in subscription_rows if row.is_paid)

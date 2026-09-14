@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,14 @@ from app.time import utcnow
 
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
+
+
+def reportable_subscription_condition():
+    """Keep paid history while excluding inactive students' unpaid bills."""
+    return or_(
+        Student.status == StudentStatus.enrolled,
+        StudentSubscription.is_paid.is_(True),
+    )
 
 
 def monthly_period(day: date, month_start_day: int) -> tuple[date, date]:
@@ -160,12 +168,14 @@ async def tenant_record(
 ) -> StudentSubscription:
     record = (await db.execute(
         select(StudentSubscription)
-        .join(Student, Student.id == StudentSubscription.student_id)
+        .outerjoin(Student, and_(
+            Student.id == StudentSubscription.student_id,
+            Student.tahfiz_id == context.tahfiz_id,
+        ))
         .where(
         StudentSubscription.id == record_id,
         StudentSubscription.tahfiz_id == context.tahfiz_id,
-        Student.tahfiz_id == context.tahfiz_id,
-        Student.status == StudentStatus.enrolled,
+        reportable_subscription_condition(),
     ))).scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="Subscription record not found")
@@ -180,13 +190,16 @@ def filtered_statement(
     student_id: int | None,
     search: str | None,
 ):
-    statement = select(StudentSubscription).join(
-        Student, Student.id == StudentSubscription.student_id
+    statement = select(StudentSubscription).outerjoin(
+        Student,
+        and_(
+            Student.id == StudentSubscription.student_id,
+            Student.tahfiz_id == context.tahfiz_id,
+        ),
     ).where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.period_start == period,
-        Student.tahfiz_id == context.tahfiz_id,
-        Student.status == StudentStatus.enrolled,
+        reportable_subscription_condition(),
     )
     if paid is True:
         statement = statement.where(StudentSubscription.is_paid.is_(True))
@@ -590,7 +603,8 @@ async def mark_unpaid(
         details=f"record={record.id}; receipt={record.receipt_number}",
     ))
     await db.commit()
-    return serialize_record(await tenant_record(db, context, record_id))
+    await db.refresh(record)
+    return serialize_record(record)
 
 
 @router.get("/months/{record_id}/receipt")

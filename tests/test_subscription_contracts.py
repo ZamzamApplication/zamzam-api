@@ -5,8 +5,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
-from app.models import ACTIVE_STUDENT_STATUSES, StudentStatus, StudentSubscription
+from app.database import Base
+from app.models import (
+    ACTIVE_STUDENT_STATUSES,
+    Student,
+    StudentStatus,
+    StudentSubscription,
+    Tahfiz,
+)
 from app.routers import finance, management, reports, sessions, subscriptions
 from app.schemas import BulkSubscriptionPaymentRequest, SignupRequest, SubscriptionAmountRequest, SubscriptionPaymentRequest, UpdateTahfizSettingsRequest
 
@@ -46,6 +55,69 @@ class SubscriptionPeriodTests(unittest.TestCase):
         self.assertEqual(serialized["student_code"], "A-1")
         self.assertEqual(serialized["sheikh_id"], 8)
         self.assertIn("payment_date", serialized)
+
+    def test_paid_inactive_students_remain_in_period_while_unpaid_inactive_students_do_not(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        period_start = date(2026, 7, 21)
+        period_end = date(2026, 8, 20)
+        with Session(engine) as db:
+            tahfiz = Tahfiz(name="اختبار")
+            db.add(tahfiz)
+            db.flush()
+            active = Student(name="مقيد", status=StudentStatus.enrolled, tahfiz_id=tahfiz.id)
+            inactive = Student(name="منقطع", status=StudentStatus.discontinued, tahfiz_id=tahfiz.id)
+            db.add_all([active, inactive])
+            db.flush()
+            common = {
+                "tahfiz_id": tahfiz.id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "amount_due_minor": 30000,
+                "currency": "EGP",
+            }
+            db.add_all([
+                StudentSubscription(
+                    **common,
+                    student_id=active.id,
+                    student_snapshot_id=active.id,
+                    student_name="active unpaid",
+                    is_paid=False,
+                ),
+                StudentSubscription(
+                    **common,
+                    student_id=inactive.id,
+                    student_snapshot_id=inactive.id,
+                    student_name="inactive paid",
+                    is_paid=True,
+                    payment_date=date(2026, 8, 6),
+                    payment_method="cash",
+                ),
+                StudentSubscription(
+                    **common,
+                    student_id=inactive.id,
+                    student_snapshot_id=inactive.id + 100,
+                    student_name="inactive unpaid",
+                    is_paid=False,
+                ),
+            ])
+            db.commit()
+
+            statement = subscriptions.filtered_statement(
+                SimpleNamespace(tahfiz_id=tahfiz.id),
+                period_start,
+                None,
+                None,
+                None,
+                None,
+            )
+            rows = db.scalars(statement).all()
+
+        engine.dispose()
+        self.assertEqual(
+            {(row.student_name, row.is_paid) for row in rows},
+            {("active unpaid", False), ("inactive paid", True)},
+        )
 
 
 class SubscriptionSchemaTests(unittest.TestCase):
@@ -148,9 +220,13 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(sessions))
         self.assertIn("Student.status.in_(ACTIVE_STUDENT_STATUSES)", inspect.getsource(reports))
 
-    def test_financial_views_only_bill_enrolled_students(self):
-        self.assertIn("Student.status == StudentStatus.enrolled", inspect.getsource(subscriptions.filtered_statement))
-        self.assertIn("Student.status == StudentStatus.enrolled", inspect.getsource(finance.overview))
+    def test_financial_views_keep_paid_inactive_students_but_exclude_unpaid_ones(self):
+        condition_source = inspect.getsource(subscriptions.reportable_subscription_condition)
+        self.assertIn("Student.status == StudentStatus.enrolled", condition_source)
+        self.assertIn("StudentSubscription.is_paid.is_(True)", condition_source)
+        self.assertIn("or_(", condition_source)
+        self.assertIn("reportable_subscription_condition()", inspect.getsource(subscriptions.filtered_statement))
+        self.assertIn("reportable_subscription_condition()", inspect.getsource(finance.overview))
 
     def test_student_deletion_removes_unpaid_subscriptions(self):
         source = inspect.getsource(management.delete_student_entity)
