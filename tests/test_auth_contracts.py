@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timezone
 
@@ -14,6 +15,7 @@ from app.routers.auth import (
     get_tenant_context,
     require_admin,
     require_tenant_admin,
+    require_finance_access,
 )
 from app.schemas import CreateTahfizRequest
 
@@ -112,6 +114,16 @@ class AccessTokenTests(unittest.TestCase):
         self.assertEqual(session.token_hash, refresh_token_hash(raw))
         self.assertEqual(session.user_id, 3)
         self.assertEqual(session.device_id, "device-install-0001")
+
+    def test_auditor_is_allowed_finance_but_not_tenant_admin(self):
+        context = TenantContext(
+            user=make_user(UserRole.auditor),
+            tahfiz=make_tahfiz(),
+            role=UserRole.auditor,
+        )
+        self.assertIs(asyncio.run(require_finance_access(context)), context)
+        with self.assertRaises(HTTPException):
+            asyncio.run(require_tenant_admin(context))
 
 
 class RoleContractTests(unittest.IsolatedAsyncioTestCase):

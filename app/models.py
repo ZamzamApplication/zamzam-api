@@ -34,6 +34,13 @@ DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
 DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
 DEFAULT_ATTENDANCE_STREAK_STATUS = AttendanceStatus.excused.value
 DEFAULT_PROGRESS_CATEGORIES = ["new_memorization", "recent_revision"]
+DEFAULT_PROGRESS_QUALITY_OPTIONS = [
+    {"value": 5, "label": "ممتاز"},
+    {"value": 4, "label": "جيد جداً"},
+    {"value": 3, "label": "جيد"},
+    {"value": 2, "label": "مقبول"},
+    {"value": 1, "label": "يحتاج متابعة"},
+]
 ATTENDANCE_STATUS_COLOR_KEYS = ("green", "slate", "amber", "sky", "violet", "rose")
 DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.present.value: "green",
@@ -167,6 +174,23 @@ def progress_category_options(tahfiz: "Tahfiz") -> list[str]:
     if "new_memorization" not in normalized:
         normalized.insert(0, "new_memorization")
     return normalized[:20]
+
+
+def progress_quality_options(tahfiz: "Tahfiz") -> list[dict]:
+    try:
+        values = json.loads(tahfiz.progress_quality_options)
+    except (AttributeError, TypeError, ValueError):
+        return [option.copy() for option in DEFAULT_PROGRESS_QUALITY_OPTIONS]
+    if not isinstance(values, list):
+        return [option.copy() for option in DEFAULT_PROGRESS_QUALITY_OPTIONS]
+    normalized = [
+        {"value": item.get("value"), "label": item.get("label", "").strip()}
+        for item in values
+        if isinstance(item, dict) and isinstance(item.get("label"), str)
+    ]
+    if len(normalized) != 5 or {item["value"] for item in normalized} != {1, 2, 3, 4, 5} or any(not item["label"] for item in normalized):
+        return [option.copy() for option in DEFAULT_PROGRESS_QUALITY_OPTIONS]
+    return normalized
 
 
 def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
@@ -321,6 +345,7 @@ class UserRole(str, enum.Enum):
     super_admin = "super_admin"
     admin = "admin"
     sheikh = "sheikh"
+    auditor = "auditor"
 
 
 class FeedbackStatus(str, enum.Enum):
@@ -476,6 +501,11 @@ class Tahfiz(Base):
     progress_categories: Mapped[str] = mapped_column(
         Text,
         default=lambda: json.dumps(DEFAULT_PROGRESS_CATEGORIES),
+        nullable=False,
+    )
+    progress_quality_options: Mapped[str] = mapped_column(
+        Text,
+        default=lambda: json.dumps(DEFAULT_PROGRESS_QUALITY_OPTIONS, ensure_ascii=False),
         nullable=False,
     )
     subscriptions_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

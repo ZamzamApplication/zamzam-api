@@ -7,8 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AuditLog, Expense, Sheikh, Student, StudentStatus, StudentSubscription, User
-from app.routers.auth import TenantContext, require_tenant_admin
+from app.models import AuditLog, Expense, Sheikh, Student, StudentStatus, StudentSubscription, User, UserRole
+from app.routers.auth import TenantContext, require_finance_access, require_tenant_admin
 from app.schemas import (
     BulkSubscriptionAmountRequest,
     BulkSubscriptionPaymentRequest,
@@ -265,7 +265,7 @@ def validate_period(period: date | None, context: TenantContext) -> tuple[date, 
 
 
 @router.get("/settings")
-async def get_settings(context: TenantContext = Depends(require_tenant_admin)):
+async def get_settings(context: TenantContext = Depends(require_finance_access)):
     return serialize_settings(context)
 
 
@@ -353,7 +353,7 @@ async def update_student_fee(
 async def student_current(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     student = (await db.execute(select(Student).where(
         Student.id == student_id,
@@ -363,7 +363,7 @@ async def student_current(
         raise HTTPException(status_code=404, detail="Student not found")
     if student.status != StudentStatus.enrolled:
         raise HTTPException(status_code=409, detail={"code": "student_not_enrolled"})
-    if context.tahfiz.subscriptions_enabled:
+    if context.tahfiz.subscriptions_enabled and getattr(context, "effective_role", context.user.role) != UserRole.auditor:
         await ensure_current_subscription_records(db, context)
         await db.commit()
     start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
@@ -393,11 +393,11 @@ async def list_months(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     start, _ = validate_period(period, context)
     current_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
-    if start == current_start and context.tahfiz.subscriptions_enabled:
+    if start == current_start and context.tahfiz.subscriptions_enabled and getattr(context, "effective_role", context.user.role) != UserRole.auditor:
         await ensure_current_subscription_records(db, context)
         await db.commit()
     statement = filtered_statement(context, start, paid, sheikh_id, student_id, search)
@@ -643,7 +643,7 @@ async def mark_unpaid(
 async def get_receipt(
     record_id: int,
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     record = await tenant_record(db, context, record_id)
     if not record.is_paid:
@@ -664,7 +664,7 @@ async def export_records(
     student_id: int | None = Query(default=None),
     search: str | None = Query(default=None, max_length=100),
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     start, _ = validate_period(period, context)
     statement = filtered_statement(context, start, paid, sheikh_id, student_id, search)

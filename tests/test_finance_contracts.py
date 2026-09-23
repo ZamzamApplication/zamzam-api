@@ -11,7 +11,7 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, inspect as sqlalchemy_inspect, text
 
-from app.models import DEFAULT_EXPENSE_CATEGORIES, Expense, expense_category_options
+from app.models import DEFAULT_EXPENSE_CATEGORIES, DEFAULT_PROGRESS_QUALITY_OPTIONS, Expense, expense_category_options, progress_quality_options
 from app.routers import finance, subscriptions
 from app.routers import reports
 from app.schemas import BulkSubscriptionAmountRequest, ExpenseRequest, UpdateTahfizSettingsRequest
@@ -49,6 +49,23 @@ class FinanceSchemaTests(unittest.TestCase):
         ])
         self.assertEqual([category.id for category in request.expense_categories], ["rent", "other"])
 
+    def test_progress_evaluation_labels_remain_a_complete_unique_five_point_scale(self):
+        options = [
+            {"value": 5, "label": "متقن"},
+            {"value": 4, "label": "جيد جداً"},
+            {"value": 3, "label": "جيد"},
+            {"value": 2, "label": "مقبول"},
+            {"value": 1, "label": "يحتاج متابعة"},
+        ]
+        request = UpdateTahfizSettingsRequest(progress_quality_options=options)
+        self.assertEqual(len(request.progress_quality_options), 5)
+        with self.assertRaises(ValidationError):
+            UpdateTahfizSettingsRequest(progress_quality_options=[*options[:-1], {"value": 4, "label": "ضعيف"}])
+        self.assertEqual(
+            progress_quality_options(SimpleNamespace(progress_quality_options=None)),
+            DEFAULT_PROGRESS_QUALITY_OPTIONS,
+        )
+
 
 class FinanceContractTests(unittest.TestCase):
     def test_default_categories_and_serialization_are_stable(self):
@@ -81,7 +98,8 @@ class FinanceContractTests(unittest.TestCase):
         ):
             self.assertIn(route, source)
         self.assertGreaterEqual(source.count("Expense.tahfiz_id == context.tahfiz_id"), 4)
-        self.assertGreaterEqual(source.count("Depends(require_tenant_admin)"), 6)
+        self.assertGreaterEqual(source.count("Depends(require_tenant_admin)"), 3)
+        self.assertGreaterEqual(source.count("Depends(require_finance_access)"), 4)
         for action in ("finance.expense_created", "finance.expense_updated", "finance.expense_deleted"):
             self.assertIn(action, source)
 

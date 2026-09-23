@@ -5,8 +5,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import AuditLog, Expense, Student, StudentSubscription, expense_category_options
-from app.routers.auth import TenantContext, require_tenant_admin
+from app.models import AuditLog, Expense, Sheikh, Student, StudentSubscription, UserRole, expense_category_options
+from app.routers.auth import TenantContext, require_finance_access, require_tenant_admin
 from app.routers.subscriptions import (
     ensure_current_subscription_records,
     monthly_period,
@@ -18,6 +18,23 @@ from app.time import utcnow
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 PAYMENT_METHODS = ("cash", "bank_transfer", "mobile_wallet", "other")
+
+
+@router.get("/settings")
+async def finance_settings(
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_finance_access),
+):
+    sheikhs = (await db.execute(
+        select(Sheikh.id, Sheikh.name)
+        .where(Sheikh.tahfiz_id == context.tahfiz_id)
+        .order_by(Sheikh.name)
+    )).all()
+    return {
+        "month_start_day": context.tahfiz.month_start_day,
+        "expense_categories": expense_category_options(context.tahfiz),
+        "sheikhs": [{"id": sheikh_id, "name": name} for sheikh_id, name in sheikhs],
+    }
 
 
 def validate_period(period: date | None, context: TenantContext) -> tuple[date, date]:
@@ -92,11 +109,11 @@ def expense_filters(
 async def overview(
     period: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     start, end = validate_period(period, context)
     current_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
-    if start == current_start and context.tahfiz.subscriptions_enabled:
+    if start == current_start and context.tahfiz.subscriptions_enabled and getattr(context, "effective_role", context.user.role) != UserRole.auditor:
         await ensure_current_subscription_records(db, context)
         await db.commit()
 
@@ -168,7 +185,7 @@ async def list_expenses(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     start, end = validate_period(period, context)
     filters = expense_filters(context, start, end, category_id, payment_method, search)
@@ -195,7 +212,7 @@ async def export_expenses(
     payment_method: str | None = Query(default=None),
     search: str | None = Query(default=None, max_length=100),
     db: AsyncSession = Depends(get_db),
-    context: TenantContext = Depends(require_tenant_admin),
+    context: TenantContext = Depends(require_finance_access),
 ):
     start, end = validate_period(period, context)
     rows = list((await db.execute(

@@ -511,6 +511,11 @@ async def migrate():
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"))
         if "progress_tracking_enabled" not in tahfiz_columns:
             await conn.execute(text("ALTER TABLE tahfiz ADD COLUMN progress_tracking_enabled BOOLEAN NOT NULL DEFAULT 0"))
+        if "progress_quality_options" not in tahfiz_columns:
+            default_quality_options = '[{"value":5,"label":"ممتاز"},{"value":4,"label":"جيد جداً"},{"value":3,"label":"جيد"},{"value":2,"label":"مقبول"},{"value":1,"label":"يحتاج متابعة"}]'
+            await conn.execute(text(
+                f"ALTER TABLE tahfiz ADD COLUMN progress_quality_options TEXT NOT NULL DEFAULT '{default_quality_options}'"
+            ))
         await conn.execute(text("UPDATE tahfiz SET name = 'زمزم' WHERE name = 'دار زمزم'"))
         await conn.execute(text("""
             UPDATE tahfiz

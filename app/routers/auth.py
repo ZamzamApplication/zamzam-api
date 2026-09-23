@@ -31,6 +31,7 @@ from app.models import (
     attendance_streak_status_option,
     present_status_option,
     progress_category_options,
+    progress_quality_options,
     excel_export_template_options,
     excused_absence_reset_status_options,
 )
@@ -292,7 +293,23 @@ async def get_current_user_depends(
     token = credentials.credentials if credentials else request.cookies.get(ACCESS_COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return await get_current_user(token, db)
+    user = await get_current_user(token, db)
+    if user.role == UserRole.auditor:
+        path = request.url.path
+        allowed = (
+            (request.method == "GET" and path == "/auth/me")
+            or (request.method == "POST" and path in {"/auth/logout", "/auth/refresh"})
+            or (request.method == "GET" and path.startswith("/finance/"))
+            or (request.method == "GET" and path in {
+                "/subscriptions/settings",
+                "/subscriptions/months",
+                "/subscriptions/export",
+            })
+            or (request.method == "GET" and path.startswith("/subscriptions/months/") and path.endswith("/receipt"))
+        )
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Auditor access is limited to finance")
+    return user
 
 
 async def require_admin(current_user: User = Depends(get_current_user_depends)) -> User:
@@ -391,6 +408,12 @@ async def get_tenant_context(
 async def require_tenant_admin(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:
     if context.effective_role not in (UserRole.admin, UserRole.super_admin):
         raise HTTPException(status_code=403, detail="Tahfiz administrator access required")
+    return context
+
+
+async def require_finance_access(context: TenantContext = Depends(get_tenant_context)) -> TenantContext:
+    if context.effective_role not in (UserRole.admin, UserRole.super_admin, UserRole.auditor):
+        raise HTTPException(status_code=403, detail="Finance access required")
     return context
 
 
@@ -727,6 +750,7 @@ async def get_me(
             "whatsend_enabled": tahfiz.whatsend_enabled,
             "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
             "progress_categories": progress_category_options(tahfiz),
+            "progress_quality_options": progress_quality_options(tahfiz),
         } if tahfiz else None),
     }
 

@@ -62,6 +62,7 @@ from app.models import (
     attendance_streak_status_option,
     present_status_option,
     progress_category_options,
+    progress_quality_options,
     ATTENDANCE_STATUS_COLOR_KEYS,
     DEFAULT_EXCEL_EXPORT_TEMPLATES,
     excel_export_template_options,
@@ -2017,6 +2018,7 @@ def serialize_tahfiz(tahfiz: Tahfiz) -> dict:
         "whatsend_api_key_configured": bool(tahfiz.whatsend_api_key_encrypted or settings.WHATSEND_API_KEY),
         "progress_tracking_enabled": tahfiz.progress_tracking_enabled,
         "progress_categories": progress_category_options(tahfiz),
+        "progress_quality_options": progress_quality_options(tahfiz),
         "subscriptions_enabled": tahfiz.subscriptions_enabled,
         "subscription_default_fee_minor": tahfiz.subscription_default_fee_minor,
         "subscription_currency": tahfiz.subscription_currency,
@@ -2308,6 +2310,15 @@ async def update_tahfiz_settings(
         if tahfiz.progress_categories != serialized_progress_categories:
             tahfiz.progress_categories = serialized_progress_categories
             changed_fields.append("progress_categories")
+    if body.progress_quality_options is not None:
+        normalized_quality_options = [
+            {"value": option.value, "label": option.label}
+            for option in body.progress_quality_options
+        ]
+        serialized_quality_options = json.dumps(normalized_quality_options, ensure_ascii=False)
+        if tahfiz.progress_quality_options != serialized_quality_options:
+            tahfiz.progress_quality_options = serialized_quality_options
+            changed_fields.append("progress_quality_options")
     next_subscription_fee = (
         body.subscription_default_fee_minor
         if body.subscription_default_fee_minor is not None
@@ -2427,7 +2438,7 @@ async def create_user(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
+    if body.role not in (UserRole.admin.value, UserRole.sheikh.value, UserRole.auditor.value):
         raise HTTPException(status_code=400, detail="Invalid tenant role")
     if body.sheikh_id is not None:
         sheikh = await db.scalar(select(Sheikh).where(Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id))
@@ -2487,7 +2498,7 @@ async def update_user(
             .values(revoked_at=utcnow())
         )
     if body.role is not None:
-        if body.role not in (UserRole.admin.value, UserRole.sheikh.value):
+        if body.role not in (UserRole.admin.value, UserRole.sheikh.value, UserRole.auditor.value):
             raise HTTPException(status_code=400, detail="Invalid tenant role")
         if user.id == context.tahfiz.owner_user_id and body.role != UserRole.admin.value:
             raise HTTPException(status_code=409, detail="Transfer ownership before demoting the owner")

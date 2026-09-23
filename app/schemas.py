@@ -708,6 +708,19 @@ class ExpenseCategorySetting(BaseModel):
         return value.strip()
 
 
+class ProgressQualityOptionSetting(BaseModel):
+    value: int = Field(ge=1, le=5)
+    label: str = Field(min_length=1, max_length=40)
+
+    @field_validator("label")
+    @classmethod
+    def normalize_label(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Evaluation labels cannot be blank")
+        return normalized
+
+
 class UpdateTahfizSettingsRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)
@@ -738,6 +751,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
     progress_categories: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    progress_quality_options: list[ProgressQualityOptionSetting] | None = Field(default=None, min_length=5, max_length=5)
     subscriptions_enabled: bool | None = None
     subscription_default_fee_minor: int | None = Field(default=None, ge=0)
     subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
@@ -754,6 +768,15 @@ class UpdateTahfizSettingsRequest(BaseModel):
             raise ValueError("Progress categories must be unique")
         if "new_memorization" not in values:
             raise ValueError("New memorization must remain enabled")
+        return values
+
+    @field_validator("progress_quality_options")
+    @classmethod
+    def validate_progress_quality_options(cls, values: list[ProgressQualityOptionSetting] | None) -> list[ProgressQualityOptionSetting] | None:
+        if values is not None and {item.value for item in values} != {1, 2, 3, 4, 5}:
+            raise ValueError("Quality options must contain each score from 1 through 5 exactly once")
+        if values is not None and len({item.label.casefold() for item in values}) != 5:
+            raise ValueError("Quality labels must be unique")
         return values
 
 
@@ -851,14 +874,14 @@ class SendStudentWarningRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=200)
-    role: Literal["admin", "sheikh"] = "sheikh"
+    role: Literal["admin", "sheikh", "auditor"] = "sheikh"
     sheikh_id: int | None = None
 
 
 class UpdateUserRequest(BaseModel):
     username: str | None = Field(default=None, min_length=3, max_length=50)
     password: str | None = Field(default=None, min_length=8, max_length=200)
-    role: Literal["admin", "sheikh"] | None = None
+    role: Literal["admin", "sheikh", "auditor"] | None = None
     sheikh_id: int | None = None
 
 
