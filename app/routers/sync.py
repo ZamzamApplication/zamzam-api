@@ -14,7 +14,6 @@ from app.media import signed_media_url
 from app.models import (
     Attendance,
     AuditLog,
-    ProgressCategory,
     QuranProgressEntry,
     QuranProgressRevision,
     QuranRangeType,
@@ -28,6 +27,7 @@ from app.models import (
     attendance_streak_status_option,
     excused_absence_reset_status_options,
     present_status_option,
+    progress_category_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
 from app.routers.progress import progress_snapshot
@@ -109,7 +109,7 @@ def serialize_progress(row: QuranProgressEntry) -> dict[str, Any]:
         "student_id": row.student_id,
         "sheikh_id": row.sheikh_id,
         "recorded_by_id": row.recorded_by_id,
-        "category": row.category.value,
+        "category": row.category,
         "range_type": row.range_type.value,
         "from_surah": row.from_surah,
         "from_ayah": row.from_ayah,
@@ -239,7 +239,7 @@ async def change_payload(db: AsyncSession, change: SyncChange, context: TenantCo
             QuranProgressEntry.tahfiz_id == change.tahfiz_id,
             QuranProgressEntry.session_id == int(session_id),
             QuranProgressEntry.student_id == int(student_id),
-            QuranProgressEntry.category == ProgressCategory(category),
+            QuranProgressEntry.category == category,
             student_scope_clause(context),
         ))
         return serialize_progress(row) if row else None
@@ -370,7 +370,7 @@ async def apply_progress(
         return {"status": "rejected", "code": "progress_tracking_disabled"}
     try:
         item = QuranProgressItem.model_validate(mutation.values)
-        category = ProgressCategory(item.category)
+        category = item.category
         range_type = QuranRangeType(item.range_type)
     except (ValueError, TypeError):
         raise HTTPException(status_code=422, detail="Invalid Quran progress mutation")
@@ -385,6 +385,8 @@ async def apply_progress(
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}
+    if category != "test" and category not in progress_category_options(context.tahfiz):
+        return {"status": "rejected", "code": "progress_category_disabled"}
     if session.is_confirmed:
         return {"status": "rejected", "code": "session_locked"}
     row = await db.scalar(select(QuranProgressEntry).where(

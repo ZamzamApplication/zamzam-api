@@ -60,8 +60,8 @@ class InitialTahfizSettingsRequest(BaseModel):
     subscription_currency: str = Field(default="EGP", min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
     month_start_day: int = Field(default=1, ge=1, le=28)
     progress_tracking_enabled: bool = False
-    progress_categories: list[Literal["new_memorization", "recent_revision", "old_revision"]] = Field(
-        default_factory=lambda: ["new_memorization"], min_length=1, max_length=3
+    progress_categories: list[str] = Field(
+        default_factory=lambda: ["new_memorization", "recent_revision"], min_length=1, max_length=20
     )
 
     @field_validator("attendance_statuses", "session_name_options")
@@ -90,6 +90,8 @@ class InitialTahfizSettingsRequest(BaseModel):
     @field_validator("progress_categories")
     @classmethod
     def unique_progress_categories(cls, values: list[str]) -> list[str]:
+        if any(not value or value.strip() != value or not value.isprintable() or len(value) > 50 or value in {"test", "الحفظ", "المراجعة", "المراجعة البعيدة"} for value in values):
+            raise ValueError("Invalid progress category")
         if len(values) != len(set(values)):
             raise ValueError("Progress categories must be unique")
         if "new_memorization" not in values:
@@ -735,7 +737,7 @@ class UpdateTahfizSettingsRequest(BaseModel):
     whatsend_api_key: str | None = Field(default=None, max_length=1000)
     whatsend_enabled: bool | None = None
     progress_tracking_enabled: bool | None = None
-    progress_categories: list[Literal["new_memorization", "recent_revision", "old_revision"]] | None = Field(default=None, min_length=1, max_length=3)
+    progress_categories: list[str] | None = Field(default=None, min_length=1, max_length=20)
     subscriptions_enabled: bool | None = None
     subscription_default_fee_minor: int | None = Field(default=None, ge=0)
     subscription_currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Za-z]{3}$")
@@ -746,6 +748,8 @@ class UpdateTahfizSettingsRequest(BaseModel):
     def validate_progress_categories(cls, values: list[str] | None) -> list[str] | None:
         if values is None:
             return values
+        if any(not value or value.strip() != value or not value.isprintable() or len(value) > 50 or value in {"test", "الحفظ", "المراجعة", "المراجعة البعيدة"} for value in values):
+            raise ValueError("Invalid progress category")
         if len(values) != len(set(values)):
             raise ValueError("Progress categories must be unique")
         if "new_memorization" not in values:
@@ -907,7 +911,7 @@ class QuranRangeInput(BaseModel):
 
 class QuranProgressItem(QuranRangeInput):
     student_id: int
-    category: Literal["new_memorization", "recent_revision", "old_revision", "test"]
+    category: str = Field(min_length=1, max_length=50)
     sheikh_id: int | None = None
     quality_score: int = Field(ge=1, le=5)
     mistakes: int = Field(default=0, ge=0, le=1000)
@@ -920,7 +924,7 @@ class QuranProgressBatchRequest(BaseModel):
 
 
 class StudentQuranPlanInput(BaseModel):
-    category: Literal["new_memorization", "recent_revision", "old_revision"]
+    category: str = Field(min_length=1, max_length=50)
     increment_unit: Literal["ayahs", "lines", "pages", "juz", "hizb", "quarter", "half_page"]
     increment_amount: int = Field(ge=1, le=604)
     next_surah: int | None = Field(default=None, ge=1, le=114)

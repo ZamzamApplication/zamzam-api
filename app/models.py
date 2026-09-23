@@ -33,8 +33,7 @@ DEFAULT_ABSENT_STATUS = AttendanceStatus.absent.value
 DEFAULT_EXCUSED_ABSENCE_STREAK_LIMIT = 3
 DEFAULT_EXCUSED_ABSENCE_RESET_STATUSES = [AttendanceStatus.present.value]
 DEFAULT_ATTENDANCE_STREAK_STATUS = AttendanceStatus.excused.value
-TRACKABLE_PROGRESS_CATEGORIES = ("new_memorization", "recent_revision", "old_revision")
-DEFAULT_PROGRESS_CATEGORIES = ["new_memorization"]
+DEFAULT_PROGRESS_CATEGORIES = ["new_memorization", "recent_revision"]
 ATTENDANCE_STATUS_COLOR_KEYS = ("green", "slate", "amber", "sky", "violet", "rose")
 DEFAULT_ATTENDANCE_STATUS_COLORS = {
     AttendanceStatus.present.value: "green",
@@ -161,11 +160,13 @@ def progress_category_options(tahfiz: "Tahfiz") -> list[str]:
     if not isinstance(values, list):
         return DEFAULT_PROGRESS_CATEGORIES.copy()
     normalized = list(dict.fromkeys(
-        value for value in values if value in TRACKABLE_PROGRESS_CATEGORIES
+        value for value in values
+        if isinstance(value, str) and value.strip() == value and value and value.isprintable()
+        and len(value) <= 50 and value not in {"test", "الحفظ", "المراجعة", "المراجعة البعيدة"}
     ))
     if "new_memorization" not in normalized:
         normalized.insert(0, "new_memorization")
-    return normalized
+    return normalized[:20]
 
 
 def excel_export_template_options(tahfiz: "Tahfiz") -> dict:
@@ -896,7 +897,7 @@ class QuranProgressEntry(Base):
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
     sheikh_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("sheikhs.id"), nullable=True)
     recorded_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
     range_type: Mapped[QuranRangeType] = mapped_column(Enum(QuranRangeType), nullable=False)
     from_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
     from_ayah: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -924,7 +925,7 @@ class StudentQuranPlan(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tahfiz_id: Mapped[int] = mapped_column(Integer, ForeignKey("tahfiz.id"), nullable=False, index=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
-    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
     increment_unit: Mapped[WardIncrementUnit] = mapped_column(Enum(WardIncrementUnit), nullable=False)
     increment_amount: Mapped[int] = mapped_column(Integer, nullable=False)
     next_surah: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -950,7 +951,7 @@ class QuranProgressRevision(Base):
     progress_entry_id: Mapped[int] = mapped_column(Integer, ForeignKey("quran_progress_entries.id"), nullable=False)
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey("sessions.id"), nullable=False)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"), nullable=False)
-    category: Mapped[ProgressCategory] = mapped_column(Enum(ProgressCategory), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
     editor_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     before_json: Mapped[str] = mapped_column(Text, nullable=False)
     after_json: Mapped[str] = mapped_column(Text, nullable=False)

@@ -251,7 +251,8 @@ class SubscriptionSourceContractTests(unittest.TestCase):
         self.assertIn('"student_fee_override_minor"', source)
         self.assertIn("subscription_batch_stale", source)
         self.assertIn("subscription_currency_locked", source)
-        self.assertIn("Student.registration_date <= today", source)
+        self.assertIn("Student.registration_date <= eligible_through", source)
+        self.assertIn('"/months/generate"', source)
         self.assertIn("Student.status == StudentStatus.enrolled", source)
         self.assertIn('"student_not_enrolled"', source)
 

@@ -421,13 +421,13 @@ async def attendance_grid(
             QuranProgressEntry.student_id.in_(student_ids),
             QuranProgressEntry.session_id.in_(session_ids),
             QuranProgressEntry.tahfiz_id == context.tahfiz_id,
-            QuranProgressEntry.category.in_(["new_memorization", "recent_revision", "old_revision"]),
+            QuranProgressEntry.category != "test",
         )
         .order_by(Session.date, Session.id, QuranProgressEntry.updated_at, QuranProgressEntry.id)
     )).scalars().all() if context.tahfiz.progress_tracking_enabled else []
     quran_progress_ranges: dict[int, dict[str, dict]] = {}
     for entry in progress_entries:
-        category_range = quran_progress_ranges.setdefault(entry.student_id, {}).setdefault(entry.category.value, {})
+        category_range = quran_progress_ranges.setdefault(entry.student_id, {}).setdefault(entry.category, {})
         snapshot = {
             "range_type": entry.range_type.value,
             "from_surah": entry.from_surah,

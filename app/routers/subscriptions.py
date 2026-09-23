@@ -100,17 +100,27 @@ async def ensure_current_subscription_records(
     db: AsyncSession,
     context: TenantContext,
 ) -> int:
-    if not context.tahfiz.subscriptions_enabled:
-        return 0
     today = date.today()
     period_start, period_end = monthly_period(today, context.tahfiz.month_start_day)
+    return await ensure_subscription_records(db, context, period_start, period_end, today)
+
+
+async def ensure_subscription_records(
+    db: AsyncSession,
+    context: TenantContext,
+    period_start: date,
+    period_end: date,
+    eligible_through: date,
+) -> int:
+    if not context.tahfiz.subscriptions_enabled:
+        return 0
     rows = (await db.execute(
         select(Student, Sheikh)
         .outerjoin(Sheikh, Sheikh.id == Student.sheikh_id)
         .where(
             Student.tahfiz_id == context.tahfiz_id,
             Student.status == StudentStatus.enrolled,
-            or_(Student.registration_date.is_(None), Student.registration_date <= today),
+            or_(Student.registration_date.is_(None), Student.registration_date <= eligible_through),
         )
         .order_by(Student.id)
     )).all()
@@ -160,6 +170,21 @@ async def ensure_current_subscription_records(
             details=f"period={period_start.isoformat()}; generated={generated}",
         ))
     return generated
+
+
+@router.post("/months/generate")
+async def generate_past_month(
+    period: date = Query(...),
+    db: AsyncSession = Depends(get_db),
+    context: TenantContext = Depends(require_tenant_admin),
+):
+    start, end = validate_period(period, context)
+    current_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
+    if start >= current_start or not context.tahfiz.subscriptions_enabled:
+        raise HTTPException(status_code=400, detail={"code": "invalid_historical_subscription_period"})
+    generated = await ensure_subscription_records(db, context, start, end, end)
+    await db.commit()
+    return {"generated": generated}
 
 
 async def tenant_record(
@@ -404,14 +429,17 @@ async def bulk_mark_paid(
 ):
     if body.payment_date > date.today():
         raise HTTPException(status_code=400, detail={"code": "future_payment_date"})
+    current_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
     rows = list((await db.execute(
         select(StudentSubscription)
-        .join(Student, Student.id == StudentSubscription.student_id)
+        .outerjoin(Student, and_(
+            Student.id == StudentSubscription.student_id,
+            Student.tahfiz_id == context.tahfiz_id,
+        ))
         .where(
         StudentSubscription.tahfiz_id == context.tahfiz_id,
         StudentSubscription.id.in_(body.record_ids),
-        Student.tahfiz_id == context.tahfiz_id,
-        Student.status == StudentStatus.enrolled,
+        reportable_subscription_condition(current_start),
     ).order_by(StudentSubscription.id))).scalars().all())
     if {row.id for row in rows} != set(body.record_ids):
         raise HTTPException(status_code=404, detail={"code": "subscription_record_not_found"})
@@ -453,6 +481,7 @@ async def bulk_correct_amount(
     context: TenantContext = Depends(require_tenant_admin),
 ):
     period_start, _ = validate_period(body.period, context)
+    current_start, _ = monthly_period(date.today(), context.tahfiz.month_start_day)
     matching_ids = list((await db.execute(
         select(StudentSubscription.id)
         .outerjoin(Student, Student.id == StudentSubscription.student_id)
@@ -461,7 +490,7 @@ async def bulk_correct_amount(
             StudentSubscription.period_start == period_start,
             StudentSubscription.is_paid.is_(False),
             StudentSubscription.amount_due_minor == body.from_fee_minor,
-            Student.status == StudentStatus.enrolled,
+            reportable_subscription_condition(current_start),
             or_(Student.id.is_(None), Student.subscription_fee_override_minor.is_(None)),
         )
         .order_by(StudentSubscription.id)

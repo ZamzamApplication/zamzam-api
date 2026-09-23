@@ -12,7 +12,6 @@ from app.time import utcnow
 from app.models import (
     Attendance,
     AuditLog,
-    ProgressCategory,
     QuranProgressEntry,
     QuranProgressRevision,
     QuranRangeType,
@@ -35,6 +34,10 @@ from app.schemas import (
 )
 
 router = APIRouter(tags=["quran-progress"])
+
+
+def category_key(category: str) -> str:
+    return category.value if hasattr(category, "value") else category
 
 
 def ensure_enabled(context: TenantContext) -> None:
@@ -66,7 +69,7 @@ def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None)
         "student_id": entry.student_id,
         "sheikh_id": entry.sheikh_id,
         "recorded_by_id": entry.recorded_by_id,
-        "category": entry.category.value,
+        "category": category_key(entry.category),
         "range_type": entry.range_type.value,
         "from_surah": entry.from_surah,
         "from_ayah": entry.from_ayah,
@@ -125,7 +128,7 @@ def serialize_plan(plan: StudentQuranPlan) -> dict:
     return {
         "id": plan.id,
         "student_id": plan.student_id,
-        "category": plan.category.value,
+        "category": category_key(plan.category),
         "increment_unit": plan.increment_unit.value,
         "increment_amount": plan.increment_amount,
         "next_surah": plan.next_surah,
@@ -139,7 +142,7 @@ def serialize_plan(plan: StudentQuranPlan) -> dict:
 def plan_suggestion(plan: StudentQuranPlan) -> dict:
     suggestion = {
         "student_id": plan.student_id,
-        "category": plan.category.value,
+        "category": category_key(plan.category),
         "quality_score": 0,
         "mistakes": 0,
         "notes": None,
@@ -236,11 +239,11 @@ async def update_student_quran_plans(
         StudentQuranPlan.student_id == student_id,
         StudentQuranPlan.tahfiz_id == context.tahfiz_id,
     ))).scalars().all()
-    existing_by_category = {plan.category.value: plan for plan in existing}
+    existing_by_category = {category_key(plan.category): plan for plan in existing}
     requested_categories = {item.category for item in body.plans}
 
     for plan in existing:
-        if plan.category.value not in requested_categories:
+        if category_key(plan.category) not in requested_categories:
             await db.delete(plan)
     saved: list[StudentQuranPlan] = []
     for item in body.plans:
@@ -249,7 +252,7 @@ async def update_student_quran_plans(
             plan = StudentQuranPlan(
                 tahfiz_id=context.tahfiz_id,
                 student_id=student_id,
-                category=ProgressCategory(item.category),
+                category=item.category,
             )
             db.add(plan)
         plan.increment_unit = WardIncrementUnit(item.increment_unit)
@@ -422,23 +425,23 @@ async def save_session_progress(
         QuranProgressEntry.tahfiz_id == context.tahfiz_id,
     ))).scalars().all()
     existing_by_key = {
-        (entry.student_id, entry.category.value): entry
+        (entry.student_id, category_key(entry.category)): entry
         for entry in existing_entries
     }
     plans = (await db.execute(select(StudentQuranPlan).where(
         StudentQuranPlan.student_id.in_(student_ids),
         StudentQuranPlan.tahfiz_id == context.tahfiz_id,
     ))).scalars().all()
-    plans_by_key = {(plan.student_id, plan.category.value): plan for plan in plans}
+    plans_by_key = {(plan.student_id, category_key(plan.category)): plan for plan in plans}
     enabled_categories = set(progress_category_options(context.tahfiz))
     changed_records: list[dict] = []
     for item in body.updates:
         try:
-            category = ProgressCategory(item.category)
+            category = item.category
             range_type = QuranRangeType(item.range_type)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid progress category or range type")
-        if category != ProgressCategory.test and category.value not in enabled_categories:
+        if category != "test" and category not in enabled_categories:
             raise HTTPException(status_code=422, detail={"code": "progress_category_disabled"})
         values = {
             "tahfiz_id": context.tahfiz_id,
@@ -460,7 +463,7 @@ async def save_session_progress(
             "next_assignment": item.next_assignment,
             "updated_at": utcnow(),
         }
-        existing = existing_by_key.get((item.student_id, category.value))
+        existing = existing_by_key.get((item.student_id, category))
         before = progress_snapshot(existing) if existing else None
         after = progress_snapshot(item)
         if existing and before != after:
@@ -477,7 +480,7 @@ async def save_session_progress(
             changed_records.append({
                 "entry_id": existing.id,
                 "student_id": item.student_id,
-                "category": category.value,
+                "category": category,
                 "before": before,
                 "after": after,
             })
@@ -490,7 +493,7 @@ async def save_session_progress(
             },
         )
         await db.execute(statement)
-        plan = plans_by_key.get((item.student_id, category.value))
+        plan = plans_by_key.get((item.student_id, category))
         if should_advance_plan(plan, session.date, existing) and progress_starts_at_plan(plan, item):
             if plan.increment_unit == WardIncrementUnit.pages:
                 if range_type != QuranRangeType.page or item.to_page is None:
@@ -579,7 +582,7 @@ async def student_progress(
             {
                 "entry_id": entry.id,
                 "session_date": session_dates[entry.session_id].isoformat(),
-                "category": entry.category.value,
+                "category": category_key(entry.category),
                 "quality_score": entry.quality_score,
                 "mistakes": entry.mistakes,
             }
@@ -591,7 +594,7 @@ async def student_progress(
                 "id": revision.id,
                 "progress_entry_id": revision.progress_entry_id,
                 "session_id": revision.session_id,
-                "category": revision.category.value,
+                "category": category_key(revision.category),
                 "editor_user_id": revision.editor_user_id,
                 "editor_username": username,
                 "before": json.loads(revision.before_json),
@@ -740,5 +743,5 @@ async def progress_report(
             }
             for student_id, name, count, average, mistakes in rows
         ],
-        "category_totals": {category.value: count for category, count in category_rows},
+        "category_totals": {category_key(category): count for category, count in category_rows},
     }

@@ -78,10 +78,17 @@ class ProgressFeatureGateTests(unittest.IsolatedAsyncioTestCase):
 
 
 class QuranRangeValidationTests(unittest.TestCase):
-    def test_hifz_is_the_only_default_progress_category(self):
+    def test_hifz_and_revision_are_default_progress_categories(self):
         request = InitialTahfizSettingsRequest()
 
-        self.assertEqual(request.progress_categories, ["new_memorization"])
+        self.assertEqual(request.progress_categories, ["new_memorization", "recent_revision"])
+
+    def test_custom_progress_categories_are_validated(self):
+        request = UpdateTahfizSettingsRequest(progress_categories=["new_memorization", "recent_revision", "التثبيت"])
+        self.assertIn("التثبيت", request.progress_categories)
+        for categories in (["new_memorization", "التثبيت", "التثبيت"], ["new_memorization", "test"], ["new_memorization", " قسم "], ["new_memorization", "الحفظ"]):
+            with self.assertRaises(ValidationError):
+                UpdateTahfizSettingsRequest(progress_categories=categories)
 
     def test_hifz_category_cannot_be_removed(self):
         with self.assertRaises(ValidationError):
