@@ -9,6 +9,26 @@ from app.database import Base
 from app.time import utcnow
 
 
+class PersonalPlan(Base):
+    """Personal builder output, owned by a user rather than a Tahfiz."""
+
+    __tablename__ = "personal_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    configuration: Mapped[str] = mapped_column(Text)
+    study_dates: Mapped[str] = mapped_column(Text, default="[]")
+    completed_dates: Mapped[str] = mapped_column(Text, default="[]")
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    share_mode: Mapped[str] = mapped_column(String(16), default="private")
+    share_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class StudentStatus(str, enum.Enum):
     enrolled = "مقيد"
     excluded = "مستبعد"
