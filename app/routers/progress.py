@@ -692,6 +692,7 @@ async def update_student_goal(
 async def progress_report(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    sheikh_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
@@ -738,6 +739,10 @@ async def progress_report(
         latest_query = latest_query.where(Session.date >= date_from)
     if date_to:
         latest_query = latest_query.where(Session.date <= date_to)
+    if sheikh_id is not None:
+        student_query = student_query.where(Student.sheikh_id == sheikh_id)
+        category_query = category_query.where(Student.sheikh_id == sheikh_id)
+        latest_query = latest_query.where(Student.sheikh_id == sheikh_id)
     rows = (await db.execute(student_query)).all()
     category_rows = (await db.execute(category_query)).all()
     latest_by_student: dict[int, dict] = {}

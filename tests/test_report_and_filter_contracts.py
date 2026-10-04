@@ -1,10 +1,12 @@
 import unittest
 from collections import Counter
 from datetime import date, datetime
+from dataclasses import replace
 
 from app.models import DEFAULT_ATTENDANCE_STATUSES, Tahfiz, TahfizStatus, User, UserRole, attendance_status_options
 from app.routers.auth import TenantContext
-from app.routers.reports import attendance_report_metrics, circle_attendance_rate
+from app.routers.reports import attendance_report_metrics, circle_attendance_rate, circle_student_stats
+from app.routers.progress import progress_report
 from app.routers.saved_filters import create_saved_filter, list_saved_filters
 from app.schemas import CreateSavedFilterRequest
 
@@ -99,6 +101,52 @@ class MonthlyReportContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(date_from, query_params)
         self.assertIn(date_to, query_params)
         self.assertEqual(response["total_attendance_records"], 0)
+
+
+class SheikhReportContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_attendance_reports_filter_students_within_tenant_scope(self):
+        for endpoint in (circle_attendance_rate, circle_student_stats):
+            with self.subTest(endpoint=endpoint.__name__):
+                db = _SequencedSession([_RowsResult([]), _RowsResult([])])
+                await endpoint(circle_id=8, date_from=None, date_to=None,
+                               sheikh_id=42, db=db, context=make_context(8))
+                query = db.statements[0]
+                self.assertIn("students.tahfiz_id =", str(query))
+                self.assertIn("students.sheikh_id =", str(query))
+                self.assertIn(8, query.compile().params.values())
+                self.assertIn(42, query.compile().params.values())
+
+    async def test_progress_filter_applies_to_students_totals_and_latest_entries(self):
+        context = make_context(8)
+        context.tahfiz.progress_tracking_enabled = True
+        db = _SequencedSession([_RowsResult([]) for _ in range(3)])
+        result = await progress_report(date_from=date(2026, 7, 1),
+                                      date_to=date(2026, 7, 31),
+                                      sheikh_id=42, db=db, context=context)
+        self.assertEqual(result["students"], [])
+        self.assertEqual(len(db.statements), 3)
+        for query in db.statements:
+            self.assertIn("students.tahfiz_id =", str(query))
+            self.assertIn("students.sheikh_id =", str(query))
+            self.assertIn("sessions.date >=", str(query))
+            self.assertIn("sessions.date <=", str(query))
+            self.assertIn(42, query.compile().params.values())
+
+    async def test_selected_sheikh_does_not_replace_assigned_student_scope(self):
+        context = make_context(8)
+        context = replace(context, role=UserRole.sheikh, sheikh_id=19)
+        context.tahfiz.progress_tracking_enabled = True
+        for endpoint in (circle_attendance_rate, circle_student_stats, progress_report):
+            with self.subTest(endpoint=endpoint.__name__):
+                db = _SequencedSession([_RowsResult([]) for _ in range(3)])
+                kwargs = {} if endpoint is progress_report else {"circle_id": 8}
+                await endpoint(date_from=None, date_to=None, sheikh_id=42,
+                               db=db, context=context, **kwargs)
+                for query in db.statements:
+                    if "students.sheikh_id" in str(query):
+                        params = query.compile().params.values()
+                        self.assertIn(19, params)
+                        self.assertIn(42, params)
 
 
 class AttendanceStatusSettingsTests(unittest.TestCase):
