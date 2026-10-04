@@ -430,6 +430,7 @@ async def attendance_grid(
         category_range = quran_progress_ranges.setdefault(entry.student_id, {}).setdefault(entry.category, {})
         snapshot = {
             "range_type": entry.range_type.value,
+            "direction": entry.direction or "forward",
             "from_surah": entry.from_surah,
             "from_ayah": entry.from_ayah,
             "to_surah": entry.to_surah,
