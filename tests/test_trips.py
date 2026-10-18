@@ -156,6 +156,20 @@ class TripTests(unittest.IsolatedAsyncioTestCase):
         await self.patch(trip_id, child, guardian_id=None)
         self.assertIsNone(next(p for p in (await self.detail(trip_id))['participants'] if p['id'] == child['id'])['guardian_id'])
 
+    async def test_reactivating_a_child_requires_an_active_responsible_adult(self):
+        trip_id = await self.create()
+        people = await self.roster(trip_id)
+        adult = next(p for p in people if p['is_adult'])
+        child = next(p for p in people if not p['is_adult'])
+        await self.patch(trip_id, child, guardian_id=adult['id'], active=False)
+        await self.patch(trip_id, adult, active=False)
+        child = next(p for p in (await self.detail(trip_id))['participants'] if p['id'] == child['id'])
+        await self.assert_http(422, trips.update_participant(trip_id, child['id'], trips.ParticipantInput(expected_version=child['version'], active=True), self.db, self.context))
+        # An inactive participant can still have their payment/refund corrected.
+        await self.patch(trip_id, child, paid_minor=0)
+        child = next(p for p in (await self.detail(trip_id))['participants'] if p['id'] == child['id'])
+        await self.patch(trip_id, child, active=True, guardian_id=None)
+
     async def test_foreign_groups_guardians_and_people_are_rejected(self):
         first = await self.create()
         second = await self.create()

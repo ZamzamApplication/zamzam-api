@@ -251,8 +251,9 @@ async def update_participant(trip_id: int, participant_id: int, body: Participan
         raise HTTPException(422, "المبلغ المدفوع لا يمكن أن يزيد عن رسوم المشاركة")
     if "group_id" in values:
         await validate_group(db, context, trip_id, values["group_id"])
-    if "guardian_id" in values:
-        await validate_guardian(db, context, trip_id, values["guardian_id"], person.id)
+    guardian_id = values.get("guardian_id", person.guardian_id)
+    if values.get("active", person.active) or guardian_id != person.guardian_id:
+        await validate_guardian(db, context, trip_id, guardian_id, person.id)
     if values.get("is_adult", person.is_adult) and values.get("guardian_id", person.guardian_id) is not None:
         raise HTTPException(422, "المرافق البالغ يجب أن يكون مستقلاً")
     if not values.get("is_adult", person.is_adult) or not values.get("active", person.active):
