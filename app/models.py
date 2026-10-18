@@ -1149,3 +1149,95 @@ class SyncMutationReceipt(Base):
     device_id: Mapped[str] = mapped_column(String(100), nullable=False)
     result_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class Trip(Base):
+    __tablename__ = "trips"
+    __table_args__ = (Index("ix_trips_tenant_date", "tahfiz_id", "date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120))
+    destination: Mapped[str] = mapped_column(String(200), default="")
+    date: Mapped[date] = mapped_column(Date)
+    meeting_point: Mapped[str] = mapped_column(String(200), default="")
+    departure_time: Mapped[str] = mapped_column(String(5), default="")
+    fee_minor: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="EGP")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="planned")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TripGroup(Base):
+    __tablename__ = "trip_groups"
+    __table_args__ = (UniqueConstraint("trip_id", "name", name="uq_trip_group_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"))
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"))
+    name: Mapped[str] = mapped_column(String(100))
+
+
+class TripParticipant(Base):
+    __tablename__ = "trip_participants"
+    __table_args__ = (
+        UniqueConstraint("trip_id", "student_id", name="uq_trip_student"),
+        CheckConstraint("fee_minor >= 0 AND paid_minor >= 0 AND paid_minor <= fee_minor", name="ck_trip_participant_money"),
+        Index("ix_trip_participants_tenant_trip", "tahfiz_id", "trip_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"))
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"))
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("trip_groups.id", ondelete="SET NULL"), nullable=True)
+    guardian_id: Mapped[int | None] = mapped_column(ForeignKey("trip_participants.id", ondelete="SET NULL"), nullable=True)
+    is_adult: Mapped[bool] = mapped_column(Boolean, default=False)
+    kind: Mapped[str] = mapped_column(String(12), default="student")
+    name: Mapped[str] = mapped_column(String(120))
+    phone: Mapped[str] = mapped_column(String(30), default="")
+    student_code: Mapped[str] = mapped_column(String(50), default="")
+    sheikh_name: Mapped[str] = mapped_column(String(120), default="")
+    fee_minor: Mapped[int] = mapped_column(Integer, default=0)
+    paid_minor: Mapped[int] = mapped_column(Integer, default=0)
+    payment_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
+    exemption_reason: Mapped[str] = mapped_column(String(200), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TripRound(Base):
+    __tablename__ = "trip_rounds"
+    __table_args__ = (Index("ix_trip_rounds_tenant_trip", "tahfiz_id", "trip_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"))
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"))
+    title: Mapped[str] = mapped_column(String(120))
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TripCheck(Base):
+    __tablename__ = "trip_checks"
+    __table_args__ = (
+        UniqueConstraint("round_id", "participant_id", name="uq_trip_round_participant"),
+        Index("ix_trip_checks_tenant_round", "tahfiz_id", "round_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"))
+    trip_id: Mapped[int] = mapped_column(ForeignKey("trips.id"))
+    round_id: Mapped[int] = mapped_column(ForeignKey("trip_rounds.id"))
+    participant_id: Mapped[int] = mapped_column(ForeignKey("trip_participants.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("trip_groups.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    checked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)

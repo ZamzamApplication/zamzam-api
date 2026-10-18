@@ -952,8 +952,21 @@ class QuranProgressItem(QuranRangeInput):
     next_assignment: str | None = Field(default=None, max_length=4000)
 
 
+class QuranProgressDeleteItem(BaseModel):
+    student_id: int
+    category: str = Field(min_length=1, max_length=50)
+
+
 class QuranProgressBatchRequest(BaseModel):
-    updates: list[QuranProgressItem] = Field(min_length=1, max_length=500)
+    updates: list[QuranProgressItem] = Field(default_factory=list, max_length=500)
+    deletions: list[QuranProgressDeleteItem] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_changes(self):
+        keys = [(item.student_id, item.category) for item in [*self.updates, *self.deletions]]
+        if not keys or len(keys) != len(set(keys)):
+            raise ValueError("Provide at least one change and only one change per student/category")
+        return self
 
 
 class StudentQuranPlanInput(BaseModel):

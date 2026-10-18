@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -400,7 +400,7 @@ async def save_session_progress(
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
-    student_ids = {item.student_id for item in body.updates}
+    student_ids = {item.student_id for item in [*body.updates, *body.deletions]}
     valid_students = set((await db.execute(select(Student.id).where(
         Student.id.in_(student_ids),
         Student.quran_progress_enabled.is_(True),
@@ -526,6 +526,37 @@ async def save_session_progress(
             plan.last_advanced_on = session.date
             plan.updated_at = utcnow()
 
+    deleted_records = []
+    for item in body.deletions:
+        existing = existing_by_key.get((item.student_id, item.category))
+        if existing is None:
+            continue
+        revisions = (await db.execute(select(QuranProgressRevision).where(
+            QuranProgressRevision.progress_entry_id == existing.id,
+            QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+        ))).scalars().all()
+        # Preserve the entry and its revision history in the deletion audit.
+        deleted_records.append({
+            "entry_id": existing.id,
+            "student_id": item.student_id,
+            "category": item.category,
+            "before": progress_snapshot(existing),
+            "revisions": [{
+                "editor_user_id": revision.editor_user_id,
+                "before": json.loads(revision.before_json),
+                "after": json.loads(revision.after_json),
+                "created_at": revision.created_at.isoformat(),
+            } for revision in revisions],
+        })
+        await db.execute(delete(QuranProgressRevision).where(
+            QuranProgressRevision.progress_entry_id == existing.id,
+            QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+        ))
+        await db.execute(delete(QuranProgressEntry).where(
+            QuranProgressEntry.id == existing.id,
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+        ))
+
     db.add(AuditLog(
         actor_user_id=context.user.id,
         tahfiz_id=context.tahfiz_id,
@@ -534,6 +565,7 @@ async def save_session_progress(
             "session_id": session_id,
             "records": len(body.updates),
             "changed": changed_records,
+            "deleted": deleted_records,
         }, ensure_ascii=False, sort_keys=True),
     ))
     await db.commit()
