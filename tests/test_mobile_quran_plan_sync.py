@@ -1,9 +1,15 @@
 import unittest
+from typing import get_type_hints
+from app.routers.progress import advance_plan_cursor
+from app.schemas import QuranProgressItem
 from app.models import Student, Session as StudySession, StudentQuranPlan, Tahfiz, WardIncrementUnit, QuranProgressEntry
 from app.routers.sync import SyncMutation, SyncMutationBatch, mutations
 from tests import test_mobile_attendance_sync as fixtures
 
 class MobileQuranPlanSyncTests(unittest.IsolatedAsyncioTestCase):
+    def test_plan_cursor_annotations_resolve(self):
+        self.assertIs(get_type_hints(advance_plan_cursor)['item'], QuranProgressItem)
+
     tearDown = fixtures.MobileAttendanceSyncTests.tearDown
     def setUp(self):
         fixtures.MobileAttendanceSyncTests.setUp(self)

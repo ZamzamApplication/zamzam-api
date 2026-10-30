@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.routers.auth import TenantContext, attendance_student_scope_clause, get_tenant_context, require_tenant_admin, student_scope_clause
 from app.schemas import (
+    QuranProgressItem,
     CreateStudentGoalRequest,
     QuranProgressBatchRequest,
     StudentQuranPlansRequest,
