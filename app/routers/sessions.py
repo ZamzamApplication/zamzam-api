@@ -364,6 +364,7 @@ async def get_session_attendance(
                 "phone": s.phone,
                 "profile_pic": signed_media_url(s.profile_pic, context.tahfiz_id),
                 "attendance_id": att.id if att else None,
+                "revision": att.revision if att else None,
                 "status": status,
                 "notes": notes,
                 "sheikh_id": att_sheikh_id,
