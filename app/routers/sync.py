@@ -20,6 +20,7 @@ from app.models import (
     Session,
     Sheikh,
     Student,
+    StudentQuranPlan,
     SyncChange,
     SyncMutationReceipt,
     attendance_status_options,
@@ -30,7 +31,7 @@ from app.models import (
     progress_category_options,
 )
 from app.routers.auth import TenantContext, get_tenant_context, student_scope_clause
-from app.routers.progress import progress_snapshot
+from app.routers.progress import progress_snapshot, advance_plan_cursor
 from app.schemas import QuranProgressItem
 
 
@@ -384,6 +385,19 @@ async def apply_progress(
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}
+    if not session.quran_progress_enabled:
+        return {"status": "rejected", "code": "session_progress_disabled"}
+    if not student.quran_progress_enabled:
+        return {"status": "rejected", "code": "student_progress_disabled"}
+    if session.explicit_membership and not await db.scalar(select(Attendance.id).where(
+        Attendance.session_id == session_id, Attendance.student_id == item.student_id,
+        Attendance.tahfiz_id == context.tahfiz_id,
+    )):
+        return {"status": "rejected", "code": "entity_not_found"}
+    if item.sheikh_id is not None and not await db.scalar(select(Sheikh.id).where(
+        Sheikh.id == item.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id,
+    )):
+        return {"status": "rejected", "code": "invalid_sheikh"}
     if category != "test" and category not in progress_category_options(context.tahfiz):
         return {"status": "rejected", "code": "progress_category_disabled"}
     if session.is_confirmed:
@@ -402,6 +416,12 @@ async def apply_progress(
             "server": serialize_progress(row) if row else None,
             "local": mutation.values,
         }
+    existing = row
+    plan = await db.scalar(select(StudentQuranPlan).where(
+        StudentQuranPlan.tahfiz_id == context.tahfiz_id,
+        StudentQuranPlan.student_id == item.student_id,
+        StudentQuranPlan.category == category,
+    ))
     before = progress_snapshot(row) if row else None
     values = {
         "sheikh_id": item.sheikh_id,
@@ -446,6 +466,7 @@ async def apply_progress(
             **values,
         )
         db.add(row)
+    advance_plan_cursor(plan, session, item, existing)
     await db.flush()
     return {"status": "applied", "entity": serialize_progress(row)}
 
