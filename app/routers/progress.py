@@ -64,6 +64,30 @@ def progress_starts_at_plan(plan: StudentQuranPlan, item) -> bool:
     )
 
 
+def advance_plan_cursor(plan, session: Session, item: QuranProgressItem, existing):
+    if should_advance_plan(plan, session.date, existing) and progress_starts_at_plan(plan, item):
+        if plan.increment_unit == WardIncrementUnit.pages:
+            if QuranRangeType(item.range_type) != QuranRangeType.page or item.to_page is None:
+                raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
+            if (item.to_page <= 1 if plan.direction == "backward" else item.to_page >= 604):
+                plan.completed_at = utcnow()
+            else:
+                plan.next_page = item.to_page + (-1 if plan.direction == "backward" else 1)
+        else:
+            if QuranRangeType(item.range_type) != QuranRangeType.surah_ayah or item.to_surah is None or item.to_ayah is None:
+                raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
+            next_point = next_reverse_ayah(item.to_surah, item.to_ayah) if plan.direction == "backward" else (
+                None if item.to_surah == 114 and item.to_ayah == 6 else next_ayah(item.to_surah, item.to_ayah)
+            )
+            if next_point is None:
+                plan.completed_at = utcnow()
+            else:
+                plan.next_surah, plan.next_ayah = next_point
+        plan.last_advanced_session_id = session.id
+        plan.last_advanced_on = session.date
+        plan.updated_at = utcnow()
+
+
 def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None) -> dict:
     return {
         "id": entry.id,
@@ -504,27 +528,7 @@ async def save_session_progress(
         )
         await db.execute(statement)
         plan = plans_by_key.get((item.student_id, category))
-        if should_advance_plan(plan, session.date, existing) and progress_starts_at_plan(plan, item):
-            if plan.increment_unit == WardIncrementUnit.pages:
-                if range_type != QuranRangeType.page or item.to_page is None:
-                    raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
-                if (item.to_page <= 1 if plan.direction == "backward" else item.to_page >= 604):
-                    plan.completed_at = utcnow()
-                else:
-                    plan.next_page = item.to_page + (-1 if plan.direction == "backward" else 1)
-            else:
-                if range_type != QuranRangeType.surah_ayah or item.to_surah is None or item.to_ayah is None:
-                    raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
-                next_point = next_reverse_ayah(item.to_surah, item.to_ayah) if plan.direction == "backward" else (
-                    None if item.to_surah == 114 and item.to_ayah == 6 else next_ayah(item.to_surah, item.to_ayah)
-                )
-                if next_point is None:
-                    plan.completed_at = utcnow()
-                else:
-                    plan.next_surah, plan.next_ayah = next_point
-            plan.last_advanced_session_id = session_id
-            plan.last_advanced_on = session.date
-            plan.updated_at = utcnow()
+        advance_plan_cursor(plan, session, item, existing)
 
     deleted_records = []
     for item in body.deletions:
