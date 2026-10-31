@@ -95,10 +95,11 @@ async def dashboard_summary(
                 student_scope_clause(context),
                 Student.status.in_(ACTIVE_STUDENT_STATUSES),
             ).scalar_subquery(),
-            select(func.count(Session.id)).where(Session.tahfiz_id == tahfiz_id).scalar_subquery(),
+            select(func.count(Session.id)).where(Session.tahfiz_id == tahfiz_id, Session.archived_at.is_(None)).scalar_subquery(),
             select(func.count(Session.id)).where(
                 Session.tahfiz_id == tahfiz_id,
                 Session.is_confirmed == True,
+                Session.archived_at.is_(None),
             ).scalar_subquery(),
         )
     )
