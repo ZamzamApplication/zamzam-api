@@ -1,4 +1,9 @@
 import importlib
+import os
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
 import asyncio
 import tempfile
 import unittest
@@ -180,6 +185,23 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RegistrationMigrationTests(unittest.TestCase):
+    def test_fresh_database_upgrades_full_chain_and_is_repeatable(self):
+        with tempfile.TemporaryDirectory() as path:
+            database = Path(path) / 'fresh.db'
+            environment = {**os.environ, 'DATABASE_URL': f'sqlite+aiosqlite:///{database}'}
+            for _ in range(2):
+                result = subprocess.run(
+                    [sys.executable, '-m', 'alembic', 'upgrade', 'head'],
+                    cwd=Path(__file__).resolve().parents[1], env=environment,
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+            with sqlite3.connect(database) as conn:
+                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261031_34')
+                self.assertIn('progress_quality_options', {c[1] for c in conn.execute('PRAGMA table_info(tahfiz)')})
+                self.assertIsNotNone(conn.execute("SELECT name FROM sqlite_master WHERE name='student_registration_forms'").fetchone())
+                self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+
     def test_migration_round_trip(self):
         migration = importlib.import_module('migrations.versions.20261031_34_student_registration')
         engine = create_engine('sqlite:///:memory:')

@@ -18,6 +18,10 @@ DEFAULT_OPTIONS = '[{"value": 5, "label": "ممتاز"}, {"value": 4, "label": "
 
 
 def upgrade() -> None:
+    # The baseline creates today's ORM schema for a fresh installation.
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("tahfiz")}
+    if "progress_quality_options" in columns:
+        return
     op.add_column(
         "tahfiz",
         sa.Column("progress_quality_options", sa.Text(), nullable=False, server_default=DEFAULT_OPTIONS),
