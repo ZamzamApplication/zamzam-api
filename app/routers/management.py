@@ -1729,6 +1729,10 @@ async def send_warnings(
             results.append({"warning_id": wid, "success": False, "error": "Warning not found"})
             continue
 
+        if warning.sent:
+            results.append({"warning_id": wid, "success": True, "replayed": True})
+            continue
+
         student = warning.student
         sheikh = student.sheikh
         if not sheikh or not sheikh.whatsapp_group_id:

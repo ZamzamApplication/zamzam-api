@@ -879,6 +879,7 @@ class Session(Base):
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     quran_progress_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reopened_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     reopened_by_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)

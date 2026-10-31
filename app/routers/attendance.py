@@ -51,7 +51,7 @@ async def update_attendance(
         Session.id == attendance.session_id,
         Session.tahfiz_id == context.tahfiz_id,
     ))
-    if not session or session.is_confirmed:
+    if not session or session.archived_at or session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
     previous_streak = await attendance_status_streak(db, context.tahfiz, attendance.student_id)
@@ -107,6 +107,8 @@ async def upsert_attendance(
     ))
     if not session or not student:
         raise HTTPException(status_code=404, detail="Session or student not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code":"session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
@@ -194,6 +196,8 @@ async def batch_attendance(
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code":"session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
     if body.expected_version is not None and body.expected_version != session.version:
@@ -239,6 +243,7 @@ async def batch_attendance(
             Session.id == session.id,
             Session.tahfiz_id == context.tahfiz_id,
             Session.is_confirmed == False,
+            Session.archived_at.is_(None),
         )
         .values(version=Session.version + 1)
         .returning(Session.version)
