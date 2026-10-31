@@ -181,7 +181,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
 
 class RegistrationMigrationTests(unittest.TestCase):
     def test_migration_round_trip(self):
-        migration = importlib.import_module('migrations.versions.20261031_33_student_registration')
+        migration = importlib.import_module('migrations.versions.20261031_34_student_registration')
         engine = create_engine('sqlite:///:memory:')
         with engine.begin() as conn:
             for table in ['tahfiz', 'users', 'students']:

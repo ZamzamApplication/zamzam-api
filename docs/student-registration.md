@@ -14,6 +14,6 @@ Forms can be edited, closed and reopened without changing their QR. Closing a fo
 
 Set `PUBLIC_WEB_URL` on the API to the public HTTPS web origin, e.g. `https://zamzam-web.fly.dev` (the default). Mobile QR and sharing use this value. For a local environment set it to a web address reachable by the test phone. Web sharing and poster QR use the current web origin.
 
-The Alembic revision `20261031_33` adds two tables without changing existing student records. Run `alembic upgrade head` as part of the usual release process. Do not deploy from a dirty checkout. Both clients and the API must be released for the feature to work end to end.
+The Alembic revision `20261031_34` adds two tables without changing existing student records. Run `alembic upgrade head` as part of the usual release process. Do not deploy from a dirty checkout. Both clients and the API must be released for the feature to work end to end.
 
 Public form preview exposes only selected active fields. Submission validates typed values, limits attempts per IP and uses a honeypot. Management routes require tenant admin and scope every lookup and decision to the active Tahfiz. No API endpoint sends public applicants the manager's internal fields or pending applications.
