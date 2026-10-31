@@ -3,6 +3,7 @@ import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from app.quran_data import global_offset
 
 
 class ParentPhoneOut(BaseModel):
@@ -920,12 +921,20 @@ class QuranRangeInput(BaseModel):
         if self.range_type == "surah_ayah":
             if None in (self.from_surah, self.from_ayah, self.to_surah, self.to_ayah):
                 raise ValueError("Surah and ayah range is required")
-            if (self.to_surah, self.to_ayah) < (self.from_surah, self.from_ayah):
+            global_offset(self.from_surah, self.from_ayah)
+            global_offset(self.to_surah, self.to_ayah)
+            backward = getattr(self, "direction", "forward") == "backward"
+            if (self.from_surah == self.to_surah and self.to_ayah < self.from_ayah) or (
+                self.from_surah != self.to_surah and (
+                    self.to_surah > self.from_surah if backward else self.to_surah < self.from_surah
+                )
+            ):
                 raise ValueError("Range end must not precede range start")
         elif self.range_type == "page":
             if self.from_page is None or self.to_page is None:
                 raise ValueError("Page range is required")
-            if self.to_page < self.from_page:
+            backward = getattr(self, "direction", "forward") == "backward"
+            if (self.to_page > self.from_page if backward else self.to_page < self.from_page):
                 raise ValueError("Range end must not precede range start")
         else:
             raise ValueError("Invalid range type")
@@ -933,6 +942,7 @@ class QuranRangeInput(BaseModel):
 
 
 class QuranProgressItem(QuranRangeInput):
+    direction: Literal["forward", "backward"] = "forward"
     student_id: int
     category: str = Field(min_length=1, max_length=50)
     sheikh_id: int | None = None
@@ -942,11 +952,25 @@ class QuranProgressItem(QuranRangeInput):
     next_assignment: str | None = Field(default=None, max_length=4000)
 
 
+class QuranProgressDeleteItem(BaseModel):
+    student_id: int
+    category: str = Field(min_length=1, max_length=50)
+
+
 class QuranProgressBatchRequest(BaseModel):
-    updates: list[QuranProgressItem] = Field(min_length=1, max_length=500)
+    updates: list[QuranProgressItem] = Field(default_factory=list, max_length=500)
+    deletions: list[QuranProgressDeleteItem] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_changes(self):
+        keys = [(item.student_id, item.category) for item in [*self.updates, *self.deletions]]
+        if not keys or len(keys) != len(set(keys)):
+            raise ValueError("Provide at least one change and only one change per student/category")
+        return self
 
 
 class StudentQuranPlanInput(BaseModel):
+    direction: Literal["forward", "backward"] = "forward"
     category: str = Field(min_length=1, max_length=50)
     increment_unit: Literal["ayahs", "lines", "pages", "juz", "hizb", "quarter", "half_page"]
     increment_amount: int = Field(ge=1, le=604)
@@ -961,6 +985,8 @@ class StudentQuranPlanInput(BaseModel):
                 raise ValueError("Page plans require a starting page")
         elif self.next_surah is None or self.next_ayah is None:
             raise ValueError("Surah-based plans require a starting surah and ayah")
+        else:
+            global_offset(self.next_surah, self.next_ayah)
         return self
 
 

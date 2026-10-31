@@ -140,6 +140,7 @@ async def circle_attendance_rate(
     circle_id: int,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    sheikh_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
@@ -148,10 +149,13 @@ async def circle_attendance_rate(
     if circle_id != context.tahfiz_id:
         raise HTTPException(status_code=404, detail="Tahfiz not found")
     tahfiz_id = context.tahfiz_id
-    result = await db.execute(
+    student_query = (
         select(Student.id)
         .where(student_scope_clause(context), Student.status.in_(ACTIVE_STUDENT_STATUSES))
     )
+    if sheikh_id is not None:
+        student_query = student_query.where(Student.sheikh_id == sheikh_id)
+    result = await db.execute(student_query)
     student_ids = [row[0] for row in result.all()]
 
     if not student_ids:
@@ -205,18 +209,22 @@ async def circle_student_stats(
     circle_id: int,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    sheikh_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
     if circle_id != context.tahfiz_id:
         raise HTTPException(status_code=404, detail="Tahfiz not found")
     tahfiz_id = context.tahfiz_id
-    result = await db.execute(
+    student_query = (
         select(Student.id, Student.name, Student.profile_pic, Sheikh.name.label("sheikh_name"))
         .join(Sheikh)
         .where(student_scope_clause(context), Student.status.in_(ACTIVE_STUDENT_STATUSES))
         .order_by(Student.name)
     )
+    if sheikh_id is not None:
+        student_query = student_query.where(Student.sheikh_id == sheikh_id)
+    result = await db.execute(student_query)
     rows = result.all()
     student_ids = [r.id for r in rows]
 
@@ -430,6 +438,7 @@ async def attendance_grid(
         category_range = quran_progress_ranges.setdefault(entry.student_id, {}).setdefault(entry.category, {})
         snapshot = {
             "range_type": entry.range_type.value,
+            "direction": entry.direction or "forward",
             "from_surah": entry.from_surah,
             "from_ayah": entry.from_ayah,
             "to_surah": entry.to_surah,

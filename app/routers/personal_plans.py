@@ -27,6 +27,7 @@ class PlanConfiguration(BaseModel):
     endDate: date
     weekdays: list[Annotated[int, Field(ge=0, le=6)]] = Field(min_length=1, max_length=7)
     includeCompletionCheckboxes: bool
+    completionMode: Literal["day", "item"] = "day"
     tracks: list[dict] = Field(min_length=1, max_length=100)
 
     @model_validator(mode="after")
@@ -67,6 +68,8 @@ class SavePlanRequest(BaseModel):
     configuration: PlanConfiguration
     study_dates: list[date] = Field(max_length=730)
     completed_dates: list[date] = Field(default_factory=list, max_length=730)
+    assignment_ids: dict[date, list[str]] = Field(default_factory=dict, max_length=730)
+    completed_items: dict[date, list[str]] = Field(default_factory=dict, max_length=730)
     expected_version: int | None = Field(default=None, ge=1)
 
     @field_validator("name")
@@ -84,6 +87,15 @@ class SavePlanRequest(BaseModel):
             raise ValueError("Study dates must be inside the plan period")
         if not set(self.completed_dates).issubset(self.study_dates):
             raise ValueError("Completion dates must be study dates")
+        tracks = {track["id"] for track in self.configuration.tracks if track["enabled"]}
+        for day, ids in self.assignment_ids.items():
+            if day not in self.study_dates or len(ids) > 100 or len(ids) != len(set(ids)) or not set(ids).issubset(tracks):
+                raise ValueError("Invalid assignment IDs")
+        for day, ids in self.completed_items.items():
+            if day not in self.study_dates or len(ids) > 100 or not set(ids).issubset(self.assignment_ids.get(day, [])):
+                raise ValueError("Invalid completed items")
+        if self.configuration.completionMode == "item" and set(self.assignment_ids) != set(self.study_dates):
+            raise ValueError("Item completion requires daily assignment IDs")
         return self
 
 
@@ -100,6 +112,22 @@ class PlanProgressRequest(BaseModel):
     expected_version: int = Field(ge=1)
     date: date
     done: bool
+    track_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+def saved_completion(body: SavePlanRequest):
+    assignments = {str(day): ids for day, ids in body.assignment_ids.items()}
+    items = {str(day): sorted(set(ids)) for day, ids in body.completed_items.items() if ids}
+    days = {str(day) for day in body.completed_dates}
+    for day in days:
+        if assignments.get(day):
+            items[day] = assignments[day]
+    for day, ids in assignments.items():
+        if (ids and set(ids).issubset(items.get(day, []))) or (not ids and (body.configuration.completionMode == "item" or day in days)):
+            days.add(day)
+        else:
+            days.discard(day)
+    return {"assignment_ids": json.dumps(assignments), "completed_items": json.dumps(items), "completed_dates": json.dumps(sorted(days))}
 
 
 def serialize_plan(plan: PersonalPlan, *, owner=False, summary=False):
@@ -116,6 +144,7 @@ def serialize_plan(plan: PersonalPlan, *, owner=False, summary=False):
         "can_mark": not plan.archived and (owner or plan.share_mode == "read_mark"),
         "completed_dates": json.loads(plan.completed_dates),
         "study_dates": json.loads(plan.study_dates),
+        "completed_items": json.loads(plan.completed_items),
     }
     if owner:
         result["share_token"] = plan.share_token
@@ -171,6 +200,9 @@ async def create_plan(body: SavePlanRequest, db: AsyncSession = Depends(get_db),
         completed_dates=json.dumps(sorted({str(day) for day in body.completed_dates})),
         completed=bool(body.study_dates) and set(body.completed_dates) == set(body.study_dates),
     )
+    for key, value in saved_completion(body).items():
+        setattr(plan, key, value)
+    plan.completed = bool(body.study_dates) and len(json.loads(plan.completed_dates)) == len(body.study_dates)
     db.add(plan)
     await db.commit()
     await db.refresh(plan)
@@ -188,14 +220,17 @@ async def save_plan(plan_id: str, body: SavePlanRequest, db: AsyncSession = Depe
     plan = await owned_plan(plan_id, db, user)
     if body.expected_version is None:
         raise HTTPException(422, "expected_version is required")
-    changed = plan.configuration != body.configuration.model_dump_json()
+    old_configuration = json.loads(plan.configuration)
+    new_configuration = body.configuration.model_dump(mode="json")
+    changed = any(old_configuration.get(key) != new_configuration.get(key) for key in ("startDate", "endDate", "weekdays", "tracks"))
     values = {
         "name": body.name, "configuration": body.configuration.model_dump_json(),
         "study_dates": json.dumps([str(day) for day in body.study_dates]),
         "completed_dates": json.dumps(sorted({str(day) for day in body.completed_dates})),
     }
+    values.update(saved_completion(body))
     if changed:
-        values["completed"] = False
+        values["completed"] = bool(body.study_dates) and set(json.loads(values["completed_dates"])) == {str(day) for day in body.study_dates}
     return serialize_plan(await change_plan(plan, body.expected_version, values, db), owner=True)
 
 
@@ -216,11 +251,29 @@ async def mark_progress(plan: PersonalPlan, body: PlanProgressRequest, db: Async
     if day not in study_dates:
         raise HTTPException(422, "Not a study date")
     done = set(json.loads(plan.completed_dates))
-    if body.done:
+    assignments = json.loads(plan.assignment_ids)
+    items = json.loads(plan.completed_items)
+    ids = assignments.get(day, [])
+    if body.track_id is not None:
+        if body.track_id not in ids:
+            raise HTTPException(422, "Not an assigned item")
+        checked = set(ids if day in done else items.get(day, []))
+        if body.done:
+            checked.add(body.track_id)
+        else:
+            checked.discard(body.track_id)
+        items[day] = sorted(checked)
+        if set(ids).issubset(checked):
+            done.add(day)
+        else:
+            done.discard(day)
+    elif body.done:
         done.add(day)
+        items[day] = ids
     else:
         done.discard(day)
-    return await change_plan(plan, body.expected_version, {"completed_dates": json.dumps(sorted(done)), "completed": bool(study_dates) and done == study_dates}, db)
+        items.pop(day, None)
+    return await change_plan(plan, body.expected_version, {"completed_dates": json.dumps(sorted(done)), "completed_items": json.dumps(items), "completed": bool(study_dates) and done == study_dates}, db)
 
 
 @router.patch("/personal-plans/{plan_id}/progress")

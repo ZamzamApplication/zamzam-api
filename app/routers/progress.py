@@ -2,12 +2,12 @@ import json
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.quran_data import ayahs_to_end, lines_to_end, next_ayah, pages_to_end
+from app.quran_data import ayahs_to_end, lines_to_end, next_ayah, next_reverse_ayah, pages_to_end, reverse_to_end
 from app.time import utcnow
 from app.models import (
     Attendance,
@@ -53,6 +53,8 @@ def should_advance_plan(plan: StudentQuranPlan | None, session_date: date, exist
 
 
 def progress_starts_at_plan(plan: StudentQuranPlan, item) -> bool:
+    if item.direction != (plan.direction or "forward"):
+        return False
     if plan.increment_unit == WardIncrementUnit.pages:
         return item.range_type == QuranRangeType.page.value and item.from_page == plan.next_page
     return (
@@ -71,6 +73,7 @@ def serialize_entry(entry: QuranProgressEntry, session_date: date | None = None)
         "recorded_by_id": entry.recorded_by_id,
         "category": category_key(entry.category),
         "range_type": entry.range_type.value,
+        "direction": entry.direction or "forward",
         "from_surah": entry.from_surah,
         "from_ayah": entry.from_ayah,
         "to_surah": entry.to_surah,
@@ -91,6 +94,7 @@ def progress_snapshot(entry_or_item) -> dict:
     range_type = entry_or_item.range_type
     return {
         "range_type": range_type.value if hasattr(range_type, "value") else range_type,
+        "direction": getattr(entry_or_item, "direction", None) or "forward",
         "from_surah": entry_or_item.from_surah,
         "from_ayah": entry_or_item.from_ayah,
         "to_surah": entry_or_item.to_surah,
@@ -131,6 +135,7 @@ def serialize_plan(plan: StudentQuranPlan) -> dict:
         "category": category_key(plan.category),
         "increment_unit": plan.increment_unit.value,
         "increment_amount": plan.increment_amount,
+        "direction": plan.direction or "forward",
         "next_surah": plan.next_surah,
         "next_ayah": plan.next_ayah,
         "next_page": plan.next_page,
@@ -140,7 +145,9 @@ def serialize_plan(plan: StudentQuranPlan) -> dict:
 
 
 def plan_suggestion(plan: StudentQuranPlan) -> dict:
+    backward = plan.direction == "backward"
     suggestion = {
+        "direction": plan.direction or "forward",
         "student_id": plan.student_id,
         "category": category_key(plan.category),
         "quality_score": 0,
@@ -158,7 +165,7 @@ def plan_suggestion(plan: StudentQuranPlan) -> dict:
             "to_surah": None,
             "to_ayah": None,
             "from_page": start_page,
-            "to_page": pages_to_end(start_page, plan.increment_amount),
+            "to_page": max(1, start_page - plan.increment_amount + 1) if backward else pages_to_end(start_page, plan.increment_amount),
         }
     start_surah, start_ayah = plan.next_surah or 1, plan.next_ayah or 1
     lines_per_unit = {
@@ -167,7 +174,7 @@ def plan_suggestion(plan: StudentQuranPlan) -> dict:
         WardIncrementUnit.quarter: 38,
         WardIncrementUnit.half_page: 8,
     }
-    end_surah, end_ayah = (
+    end_surah, end_ayah = reverse_to_end(start_surah, start_ayah, plan.increment_amount, plan.increment_unit.value) if backward else (
         lines_to_end(
             start_surah,
             start_ayah,
@@ -257,6 +264,7 @@ async def update_student_quran_plans(
             db.add(plan)
         plan.increment_unit = WardIncrementUnit(item.increment_unit)
         plan.increment_amount = item.increment_amount
+        plan.direction = item.direction
         plan.next_surah = item.next_surah if item.increment_unit != "pages" else None
         plan.next_ayah = item.next_ayah if item.increment_unit != "pages" else None
         plan.next_page = item.next_page if item.increment_unit == "pages" else None
@@ -279,6 +287,7 @@ async def update_student_quran_plans(
                     "category": item.category,
                     "increment_unit": item.increment_unit,
                     "increment_amount": item.increment_amount,
+                    "direction": item.direction,
                 }
                 for item in body.plans
             ],
@@ -391,7 +400,7 @@ async def save_session_progress(
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
-    student_ids = {item.student_id for item in body.updates}
+    student_ids = {item.student_id for item in [*body.updates, *body.deletions]}
     valid_students = set((await db.execute(select(Student.id).where(
         Student.id.in_(student_ids),
         Student.quran_progress_enabled.is_(True),
@@ -451,6 +460,7 @@ async def save_session_progress(
             "recorded_by_id": context.user.id,
             "category": category,
             "range_type": range_type,
+            "direction": item.direction,
             "from_surah": item.from_surah,
             "from_ayah": item.from_ayah,
             "to_surah": item.to_surah,
@@ -498,20 +508,54 @@ async def save_session_progress(
             if plan.increment_unit == WardIncrementUnit.pages:
                 if range_type != QuranRangeType.page or item.to_page is None:
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by page")
-                if item.to_page >= 604:
+                if (item.to_page <= 1 if plan.direction == "backward" else item.to_page >= 604):
                     plan.completed_at = utcnow()
                 else:
-                    plan.next_page = item.to_page + 1
+                    plan.next_page = item.to_page + (-1 if plan.direction == "backward" else 1)
             else:
                 if range_type != QuranRangeType.surah_ayah or item.to_surah is None or item.to_ayah is None:
                     raise HTTPException(status_code=409, detail="This student's plan must be recorded by surah and ayah")
-                if item.to_surah == 114 and item.to_ayah == 6:
+                next_point = next_reverse_ayah(item.to_surah, item.to_ayah) if plan.direction == "backward" else (
+                    None if item.to_surah == 114 and item.to_ayah == 6 else next_ayah(item.to_surah, item.to_ayah)
+                )
+                if next_point is None:
                     plan.completed_at = utcnow()
                 else:
-                    plan.next_surah, plan.next_ayah = next_ayah(item.to_surah, item.to_ayah)
+                    plan.next_surah, plan.next_ayah = next_point
             plan.last_advanced_session_id = session_id
             plan.last_advanced_on = session.date
             plan.updated_at = utcnow()
+
+    deleted_records = []
+    for item in body.deletions:
+        existing = existing_by_key.get((item.student_id, item.category))
+        if existing is None:
+            continue
+        revisions = (await db.execute(select(QuranProgressRevision).where(
+            QuranProgressRevision.progress_entry_id == existing.id,
+            QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+        ))).scalars().all()
+        # Preserve the entry and its revision history in the deletion audit.
+        deleted_records.append({
+            "entry_id": existing.id,
+            "student_id": item.student_id,
+            "category": item.category,
+            "before": progress_snapshot(existing),
+            "revisions": [{
+                "editor_user_id": revision.editor_user_id,
+                "before": json.loads(revision.before_json),
+                "after": json.loads(revision.after_json),
+                "created_at": revision.created_at.isoformat(),
+            } for revision in revisions],
+        })
+        await db.execute(delete(QuranProgressRevision).where(
+            QuranProgressRevision.progress_entry_id == existing.id,
+            QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+        ))
+        await db.execute(delete(QuranProgressEntry).where(
+            QuranProgressEntry.id == existing.id,
+            QuranProgressEntry.tahfiz_id == context.tahfiz_id,
+        ))
 
     db.add(AuditLog(
         actor_user_id=context.user.id,
@@ -521,6 +565,7 @@ async def save_session_progress(
             "session_id": session_id,
             "records": len(body.updates),
             "changed": changed_records,
+            "deleted": deleted_records,
         }, ensure_ascii=False, sort_keys=True),
     ))
     await db.commit()
@@ -679,6 +724,7 @@ async def update_student_goal(
 async def progress_report(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    sheikh_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
 ):
@@ -725,6 +771,10 @@ async def progress_report(
         latest_query = latest_query.where(Session.date >= date_from)
     if date_to:
         latest_query = latest_query.where(Session.date <= date_to)
+    if sheikh_id is not None:
+        student_query = student_query.where(Student.sheikh_id == sheikh_id)
+        category_query = category_query.where(Student.sheikh_id == sheikh_id)
+        latest_query = latest_query.where(Student.sheikh_id == sheikh_id)
     rows = (await db.execute(student_query)).all()
     category_rows = (await db.execute(category_query)).all()
     latest_by_student: dict[int, dict] = {}

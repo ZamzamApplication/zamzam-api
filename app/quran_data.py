@@ -8,8 +8,10 @@ depends on a network service.
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
+from math import ceil
 
 from app.quran_lines_data import QURAN_LINES
+from app.quran_quarters_data import QURAN_QUARTER_STARTS
 
 
 SURAH_AYAH_COUNTS = [
@@ -81,3 +83,55 @@ def pages_to_end(start_page: int, amount: int) -> int:
     if amount < 1:
         raise ValueError("amount must be positive")
     return min(start_page + amount - 1, TOTAL_PAGES)
+
+
+def next_reverse_ayah(surah: int, ayah: int) -> tuple[int, int] | None:
+    """Descend through surahs, preserving ascending ayahs within each surah."""
+    global_offset(surah, ayah)
+    if ayah < SURAH_AYAH_COUNTS[surah - 1]:
+        return surah, ayah + 1
+    return (surah - 1, 1) if surah > 1 else None
+
+
+_QUARTER_OFFSETS = [global_offset(surah, ayah) for surah, ayah in QURAN_QUARTER_STARTS]
+
+
+def reverse_to_end(surah: int, ayah: int, amount: int, unit: str) -> tuple[int, int]:
+    """Allocate the same surah-by-surah reverse traversal as the hifz builder.
+
+    Each segment reads forward, capped at that surah's end. Any remaining
+    amount continues at ayah 1 of the preceding surah.
+    """
+    if amount < 1:
+        raise ValueError("amount must be positive")
+    global_offset(surah, ayah)
+    remaining = amount
+    while remaining > 0:
+        start = global_offset(surah, ayah)
+        surah_end = global_offset(surah, SURAH_AYAH_COUNTS[surah - 1])
+        if unit == "ayahs":
+            end = min(start + remaining - 1, surah_end)
+            used = end - start + 1
+        elif unit in ("lines", "half_page"):
+            lines_per_unit = 1 if unit == "lines" else 8
+            first = _line_index_for_ayah(surah, ayah)
+            last = min(first + remaining * lines_per_unit - 1, len(QURAN_LINES) - 1)
+            end = min(_LINE_END_OFFSETS[last], surah_end)
+            used = ceil((bisect_left(_LINE_END_OFFSETS, end) - first + 1) / lines_per_unit)
+        elif unit in ("quarter", "hizb", "juz"):
+            quarters_per_unit = {"quarter": 1, "hizb": 4, "juz": 8}[unit]
+            following = bisect_right(_QUARTER_OFFSETS, start)
+            boundary = following + remaining * quarters_per_unit - 1
+            requested_end = _QUARTER_OFFSETS[boundary] - 1 if boundary < len(_QUARTER_OFFSETS) else TOTAL_AYAHS
+            end = min(requested_end, surah_end)
+            first_quarter = bisect_right(_QUARTER_OFFSETS, start) - 1
+            last_quarter = bisect_right(_QUARTER_OFFSETS, end) - 1
+            used = ceil((last_quarter - first_quarter + 1) / quarters_per_unit)
+        else:
+            raise ValueError(f"invalid reverse unit: {unit}")
+        end_surah, end_ayah = ayah_at_offset(end)
+        remaining -= used
+        if remaining <= 0 or (end_surah == 1 and end_ayah == 7):
+            return end_surah, end_ayah
+        surah, ayah = next_reverse_ayah(end_surah, end_ayah)
+    raise AssertionError("unreachable reverse allocation")
