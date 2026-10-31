@@ -33,6 +33,14 @@ class SessionArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored['version'],2)
         self.assertIsNone(self.session.get(StudySession,10).archived_at)
         self.assertEqual(self.session.query(AuditLog).filter(AuditLog.action.in_(['session.archived','session.recovered'])).count(),2)
+    async def test_archived_sessions_do_not_appear_as_pending_dashboard_work(self):
+        from app.routers.reports import dashboard_summary
+        self.assertEqual((await dashboard_summary(self.db,self.context))['pending_sessions'],1)
+        await archive_session(10,ArchiveSessionRequest(expected_version=0,reason='Archive lesson'),self.db,self.context)
+        self.assertEqual((await dashboard_summary(self.db,self.context))['pending_sessions'],0)
+        await recover_session(10,ArchiveSessionRequest(expected_version=1,reason='Restore lesson'),self.db,self.context)
+        self.assertEqual((await dashboard_summary(self.db,self.context))['pending_sessions'],1)
+
     async def test_archive_is_tenant_scoped_and_preserves_confirmation(self):
         row=self.session.get(StudySession,10);row.is_confirmed=True;self.session.commit()
         with self.assertRaises(HTTPException) as error:
