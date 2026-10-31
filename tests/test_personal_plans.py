@@ -7,7 +7,7 @@ from pathlib import Path
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base, get_db
@@ -164,8 +164,104 @@ class PersonalPlanTests(unittest.IsolatedAsyncioTestCase):
         body["configuration"]["tracks"][0]["items"] = [{"episodes": [{"title": "Unsafe", "url": "javascript:alert(1)"}]}]
         self.assertEqual((await self.client.post("/personal-plans", headers=self.owner, json=body)).status_code, 422)
 
+    def item_body(self):
+        body = plan_body()
+        body["configuration"]["completionMode"] = "item"
+        track = {**body["configuration"]["tracks"][0], "id": "revision", "name": "المراجعة"}
+        body["configuration"]["tracks"].append(track)
+        body["assignment_ids"] = {day: ["hifz", "revision"] for day in body["study_dates"]}
+        return body
+
+    async def test_items_are_persistent_independent_and_complete_the_day_together(self):
+        response = await self.client.post("/personal-plans", headers=self.owner, json=self.item_body())
+        self.assertEqual(response.status_code, 201, response.text)
+        plan = response.json()
+        path = f"/personal-plans/{plan['id']}/progress"
+        async def mark(track_id, done):
+            nonlocal plan
+            response = await self.client.patch(path, headers=self.owner, json={"expected_version": plan["version"], "date": "2026-10-01", "track_id": track_id, "done": done})
+            self.assertEqual(response.status_code, 200, response.text)
+            plan = response.json()
+        await mark("hifz", True)
+        self.assertEqual(plan["completed_dates"], [])
+        self.assertEqual(plan["completed_items"], {"2026-10-01": ["hifz"]})
+        loaded = (await self.client.get(f"/personal-plans/{plan['id']}", headers=self.owner)).json()
+        self.assertEqual(loaded["completed_items"], plan["completed_items"])
+        await mark("revision", True)
+        self.assertEqual(plan["completed_dates"], ["2026-10-01"])
+        await mark("hifz", False)
+        self.assertEqual(plan["completed_dates"], [])
+        self.assertEqual(plan["completed_items"]["2026-10-01"], ["revision"])
+
+    async def test_day_and_item_modes_preserve_partial_and_existing_full_day_progress(self):
+        body = self.item_body()
+        body["completed_dates"] = ["2026-10-01"]
+        body["completed_items"] = {"2026-10-02": ["hifz"]}
+        response = await self.client.post("/personal-plans", headers=self.owner, json=body)
+        self.assertEqual(response.status_code, 201, response.text)
+        plan = response.json()
+        self.assertEqual(plan["completed_items"]["2026-10-01"], ["hifz", "revision"])
+        for mode in ["day", "item"]:
+            body["configuration"]["completionMode"] = mode
+            body["expected_version"] = plan["version"]
+            body["completed_items"] = plan["completed_items"]
+            response = await self.client.put(f"/personal-plans/{plan['id']}", headers=self.owner, json=body)
+            self.assertEqual(response.status_code, 200, response.text)
+            plan = response.json()
+            self.assertEqual(plan["completed_items"]["2026-10-02"], ["hifz"])
+            self.assertEqual(plan["completed_dates"], ["2026-10-01"])
+
+    async def test_item_sharing_respects_readonly_and_only_accepts_assigned_items(self):
+        body = self.item_body()
+        body["assignment_ids"]["2026-10-01"] = ["hifz"]
+        response = await self.client.post("/personal-plans", headers=self.owner, json=body)
+        self.assertEqual(response.status_code, 201, response.text)
+        plan = await self.status(response.json(), share_mode="readonly")
+        progress = {"expected_version": plan["version"], "date": "2026-10-01", "track_id": "hifz", "done": True}
+        self.assertEqual((await self.client.patch(f"/shared-plans/{plan['share_token']}/progress", json=progress)).status_code, 403)
+        plan = await self.status(plan, share_mode="read_mark")
+        progress["expected_version"] = plan["version"]
+        path = f"/shared-plans/{plan['share_token']}/progress"
+        self.assertEqual((await self.client.patch(path, json={**progress, "track_id": "revision"})).status_code, 422)
+        response = await self.client.patch(path, json=progress)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["completed_dates"], ["2026-10-01"])
+        self.assertEqual((await self.client.patch(path, json=progress)).status_code, 409)
+
+    async def test_legacy_day_clients_and_invalid_item_maps(self):
+        legacy = await self.create()
+        self.assertEqual(legacy["configuration"]["completionMode"], "day")
+        response = await self.client.patch(f"/personal-plans/{legacy['id']}/progress", headers=self.owner, json={"expected_version": legacy["version"], "date": "2026-10-01", "done": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["completed_dates"], ["2026-10-01"])
+        for change in [lambda body: body.update(assignment_ids={}),
+                       lambda body: body.update(completed_items={"2026-10-01": ["unassigned"]}),
+                       lambda body: body.update(assignment_ids={"2026-10-01": ["hifz", "hifz"]})]:
+            body = self.item_body()
+            change(body)
+            self.assertEqual((await self.client.post("/personal-plans", headers=self.owner, json=body)).status_code, 422)
+
 
 class PersonalPlanMigrationTests(unittest.TestCase):
+    def test_item_migration_preserves_old_completion_and_adds_empty_defaults(self):
+        migration = importlib.import_module("migrations.versions.20261002_30_plan_item_completion")
+        engine = create_engine("sqlite:///:memory:")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE personal_plans (id VARCHAR(36) PRIMARY KEY, completed_dates TEXT NOT NULL)"))
+            connection.execute(text("INSERT INTO personal_plans VALUES ('old', '[\"2026-10-01\"]')"))
+            original_op = migration.op
+            migration.op = Operations(MigrationContext.configure(connection))
+            try:
+                migration.upgrade()
+                migration.upgrade()
+                row = connection.execute(text("SELECT completed_dates, assignment_ids, completed_items FROM personal_plans")).one()
+                self.assertEqual(tuple(row), ('["2026-10-01"]', '{}', '{}'))
+                migration.downgrade()
+                self.assertEqual(connection.execute(text("SELECT completed_dates FROM personal_plans")).scalar_one(), '["2026-10-01"]')
+            finally:
+                migration.op = original_op
+        engine.dispose()
+
     def test_migration_creates_table_and_is_idempotent(self):
         migration = importlib.import_module("migrations.versions.20261001_29_personal_plans")
         engine = create_engine("sqlite:///:memory:")

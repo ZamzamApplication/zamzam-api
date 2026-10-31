@@ -20,6 +20,8 @@ class PersonalPlan(Base):
     configuration: Mapped[str] = mapped_column(Text)
     study_dates: Mapped[str] = mapped_column(Text, default="[]")
     completed_dates: Mapped[str] = mapped_column(Text, default="[]")
+    assignment_ids: Mapped[str] = mapped_column(Text, default="{}")
+    completed_items: Mapped[str] = mapped_column(Text, default="{}")
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     share_mode: Mapped[str] = mapped_column(String(16), default="private")
@@ -1241,3 +1243,33 @@ class TripCheck(Base):
     checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     checked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class StudentRegistrationForm(Base):
+    __tablename__ = "student_registration_forms"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    public_field_ids: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class StudentRegistrationRequest(Base):
+    __tablename__ = "student_registration_requests"
+    __table_args__ = (Index("ix_registration_requests_tenant_status", "tahfiz_id", "status"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False)
+    form_id: Mapped[int] = mapped_column(ForeignKey("student_registration_forms.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
+    answers: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    field_snapshot: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
