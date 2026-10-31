@@ -326,6 +326,7 @@ class CreateSessionRequest(BaseModel):
 
 
 class UpdateSessionRequest(BaseModel):
+    expected_version: int | None = Field(default=None, ge=0)
     session_date: date
     name: str | None = Field(default=None, max_length=100)
 
@@ -1020,3 +1021,15 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ArchiveSessionRequest(BaseModel):
+    expected_version: int = Field(ge=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_archive_reason(cls, value: str) -> str:
+        if len(value.strip()) < 3:
+            raise ValueError("A reason is required")
+        return value.strip()

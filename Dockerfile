@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
 COPY app/ ./app/
+RUN python -c "import app.main"
 COPY docker-entrypoint.sh /usr/local/bin/zamzam-entrypoint
 RUN chmod 0755 /usr/local/bin/zamzam-entrypoint \
     && chown -R zamzam:zamzam /app

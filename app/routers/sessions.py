@@ -25,7 +25,7 @@ from app.models import (
     absent_status_option,
 )
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin
-from app.schemas import ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, SessionQuranProgressRequest, UpdateSessionMembershipRequest, UpdateSessionRequest
+from app.schemas import ArchiveSessionRequest, ConfirmSessionRequest, CreateSessionRequest, ReopenSessionRequest, SessionQuranProgressRequest, UpdateSessionMembershipRequest, UpdateSessionRequest
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -52,6 +52,7 @@ def session_summary(session: Session) -> dict:
         "explicit_membership": session.explicit_membership,
         "student_count": len(session.attendance_records),
         "is_confirmed": session.is_confirmed,
+        "archived_at": session.archived_at.isoformat() if session.archived_at else None,
         "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
         "version": session.version,
@@ -66,6 +67,7 @@ def session_summary(session: Session) -> dict:
 async def get_all_sessions(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(get_tenant_context),
+    include_archived: bool = False,
 ):
     query = (
         select(Session)
@@ -75,7 +77,7 @@ async def get_all_sessions(
     )
     result = await db.execute(query)
     sessions = result.scalars().all()
-    return [session_summary(session) for session in sessions]
+    return [session_summary(session) for session in sessions if include_archived or not session.archived_at]
 
 
 @router.get("/past")
@@ -102,7 +104,7 @@ async def get_upcoming_sessions(
     query = (
         select(Session)
         .options(selectinload(Session.tahfiz), selectinload(Session.attendance_records))
-        .where(Session.is_confirmed == False, Session.tahfiz_id == context.tahfiz_id)
+        .where(Session.is_confirmed == False, Session.archived_at.is_(None), Session.tahfiz_id == context.tahfiz_id)
         .order_by(Session.date, Session.daily_sequence, Session.id)
     )
     result = await db.execute(query)
@@ -219,34 +221,27 @@ async def update_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions must be reopened before changing the date")
 
-    if session.date != body.session_date:
+    version = session.version
+    if body.expected_version is not None and version != body.expected_version:
+        raise HTTPException(status_code=409, detail={"code":"session_version_conflict", "current_version":version})
+    sequence = session.daily_sequence
+    changed_date = session.date != body.session_date
+    if changed_date:
         if not context.tahfiz.multiple_sessions_per_day_enabled and not session.explicit_membership:
-            duplicate = await db.scalar(select(Session.id).where(
-                Session.tahfiz_id == context.tahfiz_id,
-                Session.date == body.session_date,
-                Session.id != session.id,
-            ).limit(1))
+            duplicate = await db.scalar(select(Session.id).where(Session.tahfiz_id == context.tahfiz_id, Session.date == body.session_date, Session.id != session.id).limit(1))
             if duplicate is not None:
-                raise HTTPException(status_code=409, detail={
-                    "code": "session_date_exists",
-                    "message": "توجد حلقة بالفعل في هذا التاريخ.",
-                })
-        session.daily_sequence = int(await db.scalar(select(func.coalesce(func.max(Session.daily_sequence), 0)).where(
-            Session.tahfiz_id == context.tahfiz_id,
-            Session.date == body.session_date,
-            Session.id != session.id,
-        )) or 0) + 1
-        session.date = body.session_date
-        await db.execute(sa_update(StudentQuranPlan).where(
-            StudentQuranPlan.tahfiz_id == context.tahfiz_id,
-            StudentQuranPlan.last_advanced_session_id == session.id,
-        ).values(last_advanced_on=body.session_date, updated_at=utcnow()))
-    if "name" in body.model_fields_set:
-        session.name = body.name
-    session.version += 1
+                raise HTTPException(status_code=409, detail={"code":"session_date_exists"})
+        sequence = int(await db.scalar(select(func.coalesce(func.max(Session.daily_sequence), 0)).where(Session.tahfiz_id == context.tahfiz_id, Session.date == body.session_date, Session.id != session.id)) or 0) + 1
+    resulting_version = await db.scalar(sa_update(Session).where(Session.id == session.id, Session.tahfiz_id == context.tahfiz_id, Session.version == version, Session.is_confirmed.is_(False), Session.archived_at.is_(None)).values(date=body.session_date, name=body.name if "name" in body.model_fields_set else session.name, daily_sequence=sequence, version=Session.version + 1).returning(Session.version))
+    if resulting_version is None:
+        raise HTTPException(status_code=409, detail={"code":"session_version_conflict"})
+    if changed_date:
+        await db.execute(sa_update(StudentQuranPlan).where(StudentQuranPlan.tahfiz_id == context.tahfiz_id, StudentQuranPlan.last_advanced_session_id == session.id).values(last_advanced_on=body.session_date, updated_at=utcnow()))
     db.add(AuditLog(
         actor_user_id=context.user.id,
         tahfiz_id=context.tahfiz_id,
@@ -384,6 +379,7 @@ async def get_session_attendance(
         "explicit_membership": session.explicit_membership,
         "student_count": sum(len(group["students"]) for group in sheikh_groups),
         "is_confirmed": session.is_confirmed,
+        "archived_at": session.archived_at.isoformat() if session.archived_at else None,
         "quran_progress_enabled": session.quran_progress_enabled,
         "status": session_status(session),
         "version": session.version,
@@ -409,6 +405,8 @@ async def update_session_membership(
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if not session.explicit_membership:
         raise HTTPException(status_code=409, detail={"code": "session_membership_not_selective"})
     if session.is_confirmed:
@@ -512,6 +510,8 @@ async def update_session_progress_tracking(
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions must be reopened before changing Quran progress")
     if body.expected_version is not None and session.version != body.expected_version:
@@ -560,6 +560,8 @@ async def confirm_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if session.is_confirmed:
         return {"message": "Session already confirmed", "status": "confirmed", "version": session.version}
     expected_version = body.expected_version if body else None
@@ -569,6 +571,7 @@ async def confirm_session(
             Session.id == session_id,
             Session.tahfiz_id == context.tahfiz_id,
             Session.is_confirmed == False,
+            Session.archived_at.is_(None),
         )
         .values(is_confirmed=True, version=Session.version + 1)
         .returning(Session.version)
@@ -668,6 +671,8 @@ async def reopen_session(
     ))
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if not session.is_confirmed:
         raise HTTPException(status_code=409, detail="Session is already editable")
 
@@ -678,6 +683,7 @@ async def reopen_session(
             Session.id == session_id,
             Session.tahfiz_id == context.tahfiz_id,
             Session.is_confirmed == True,
+            Session.archived_at.is_(None),
         )
         .values(
             is_confirmed=False,
@@ -720,6 +726,8 @@ async def delete_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code": "session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail={
             "code": "confirmed_session_delete_forbidden",
@@ -751,3 +759,30 @@ async def delete_session(
     await db.delete(session)
     await db.commit()
     return {"message": "Session deleted"}
+
+
+@router.post("/{session_id}/archive")
+async def archive_session(session_id: int, body: ArchiveSessionRequest, db: AsyncSession = Depends(get_db), context: TenantContext = Depends(require_tenant_admin)):
+    return await set_archived(session_id, body, True, db, context)
+
+
+@router.post("/{session_id}/recover")
+async def recover_session(session_id: int, body: ArchiveSessionRequest, db: AsyncSession = Depends(get_db), context: TenantContext = Depends(require_tenant_admin)):
+    return await set_archived(session_id, body, False, db, context)
+
+
+async def set_archived(session_id: int, body: ArchiveSessionRequest, archived: bool, db: AsyncSession, context: TenantContext):
+    row = await db.scalar(select(Session).where(Session.id == session_id, Session.tahfiz_id == context.tahfiz_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.version != body.expected_version:
+        raise HTTPException(status_code=409, detail={"code":"session_version_conflict", "current_version":row.version})
+    if bool(row.archived_at) == archived:
+        return {"id":row.id,"version":row.version,"archived_at":row.archived_at.isoformat() if row.archived_at else None}
+    when = utcnow() if archived else None
+    new_version = await db.scalar(sa_update(Session).where(Session.id == session_id, Session.tahfiz_id == context.tahfiz_id, Session.version == body.expected_version).values(archived_at=when, version=Session.version + 1).returning(Session.version))
+    if new_version is None:
+        raise HTTPException(status_code=409, detail={"code":"session_version_conflict"})
+    db.add(AuditLog(actor_user_id=context.user.id,tahfiz_id=context.tahfiz_id,action="session.archived" if archived else "session.recovered",details=f"session={session_id}; reason={body.reason}; version={new_version}"))
+    await db.commit()
+    return {"id":session_id,"version":new_version,"archived_at":when.isoformat() if when else None}

@@ -58,6 +58,7 @@ def serialize_session(row: Session) -> dict[str, Any]:
         "tahfiz_id": row.tahfiz_id,
         "date": row.date.isoformat(),
         "is_confirmed": row.is_confirmed,
+        "archived_at": row.archived_at.isoformat() if row.archived_at else None,
         "version": row.version,
         "reopened_at": row.reopened_at.isoformat() if row.reopened_at else None,
     }
@@ -302,6 +303,8 @@ async def apply_attendance(
     ))
     if not session or not student:
         return {"status": "rejected", "code": "entity_not_found"}
+    if session.archived_at:
+        return {"status": "rejected", "code": "session_archived"}
     if session.is_confirmed:
         return {"status": "rejected", "code": "session_locked"}
     if status not in attendance_status_options(context.tahfiz):
@@ -400,6 +403,8 @@ async def apply_progress(
         return {"status": "rejected", "code": "invalid_sheikh"}
     if category != "test" and category not in progress_category_options(context.tahfiz):
         return {"status": "rejected", "code": "progress_category_disabled"}
+    if session.archived_at:
+        return {"status": "rejected", "code": "session_archived"}
     if session.is_confirmed:
         return {"status": "rejected", "code": "session_locked"}
     row = await db.scalar(select(QuranProgressEntry).where(
