@@ -1,6 +1,6 @@
 # Public student registration
 
-Managers open **التسجيل العام** on web (`/registration`) or **المزيد → التسجيل العام وطلبات الطلاب** on mobile.
+Managers open **الإدارة → تسجيل الطلاب** on web (`/manage?section=registration`) or **المزيد → الإدارة → تسجيل الطلاب والطلبات العامة** on mobile. The old `/registration` URL redirects to the administration section.
 
 1. Create custom student fields (text, number, date, yes/no, or select).
 2. Create a registration form and select which custom fields students fill in. Unselected fields remain internal and are completed by the manager when approving. Required internal fields still block final enrollment until completed.
