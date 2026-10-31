@@ -70,6 +70,8 @@ class WarningRetryTests(unittest.IsolatedAsyncioTestCase):
         from app.schemas import SendWarningsRequest
         self.session.add_all([StudentWarning(id=1,student_id=1,reason='Test',warning_number=1,sent=True),StudentWarning(id=2,student_id=2,reason='Other tenant',warning_number=1,sent=True)])
         self.session.commit()
+        async def get(model, key): return self.session.get(model,key)
+        self.db.get=get
         with patch('app.routers.management.send_whatsend_group_message',new_callable=AsyncMock) as provider:
             response=await send_warnings(SendWarningsRequest(warning_ids=[1,2]),self.db,self.context)
             self.assertTrue(response['results'][0]['replayed'])
