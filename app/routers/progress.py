@@ -422,6 +422,8 @@ async def save_session_progress(
             status_code=409,
             detail={"code": "session_progress_disabled", "reason": "Qur'an progress is disabled for this session"},
         )
+    if session.archived_at:
+        raise HTTPException(status_code=409, detail={"code":"session_archived"})
     if session.is_confirmed:
         raise HTTPException(status_code=409, detail="Confirmed sessions are locked")
 
