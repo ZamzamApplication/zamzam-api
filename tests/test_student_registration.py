@@ -197,7 +197,7 @@ class RegistrationMigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
             with sqlite3.connect(database) as conn:
-                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261031_34')
+                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261101_35')
                 self.assertIn('progress_quality_options', {c[1] for c in conn.execute('PRAGMA table_info(tahfiz)')})
                 self.assertIsNotNone(conn.execute("SELECT name FROM sqlite_master WHERE name='student_registration_forms'").fetchone())
                 self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')

@@ -1274,3 +1274,31 @@ class StudentRegistrationRequest(Base):
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class SessionSchedule(Base):
+    __tablename__ = "session_schedules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), index=True)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    weekdays: Mapped[str] = mapped_column(Text)
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Africa/Cairo")
+    membership_mode: Mapped[str] = mapped_column(String(16), default="all")
+    member_ids: Mapped[str] = mapped_column(Text, default="[]")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SessionOccurrence(Base):
+    # Retain the occurrence after deleting a session so retries never recreate it.
+    __tablename__ = "session_occurrences"
+    __table_args__ = (UniqueConstraint("schedule_id", "date", name="uq_schedule_occurrence_date"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schedule_id: Mapped[int] = mapped_column(ForeignKey("session_schedules.id"), index=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), index=True)
+    date: Mapped[date] = mapped_column(Date)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="created")

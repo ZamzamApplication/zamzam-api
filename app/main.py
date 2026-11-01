@@ -14,6 +14,8 @@ from sqlalchemy import text
 
 from app.database import async_session, init_db
 from app.backup_scheduler import backup_loop
+from app.session_scheduler import schedule_loop
+from app.routers import session_schedules
 from app.media import validate_media_token
 from app.routers.auth import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
 from app.routers import audit_logs, auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback, subscriptions, finance, personal_plans, trips, student_registration
@@ -21,6 +23,7 @@ from app.seed import seed_data
 
 logger = logging.getLogger(__name__)
 backup_task: asyncio.Task | None = None
+schedule_task: asyncio.Task | None = None
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -36,6 +39,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(sessions.router)
+app.include_router(session_schedules.router)
 app.include_router(attendance.router)
 app.include_router(reports.router)
 app.include_router(management.router)
@@ -98,7 +102,7 @@ async def serve_upload(filepath: str, token: str):
 
 @app.on_event("startup")
 async def startup():
-    global backup_task
+    global backup_task, schedule_task
     production = settings.APP_ENV.lower() == "production" or bool(os.getenv("FLY_APP_NAME"))
     security_issues = settings.security_issues()
     if security_issues and production:
@@ -107,16 +111,18 @@ async def startup():
     await init_db()
     await seed_data()
     backup_task = asyncio.create_task(backup_loop(), name="sqlite-backup-loop")
+    schedule_task = asyncio.create_task(schedule_loop(), name="weekly-session-loop")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    if backup_task:
-        backup_task.cancel()
-        try:
-            await backup_task
-        except asyncio.CancelledError:
-            pass
+    for task in (backup_task, schedule_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 @app.get("/health")
