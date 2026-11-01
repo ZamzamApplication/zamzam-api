@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gosu tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system zamzam \
     && useradd --system --gid zamzam --home-dir /app zamzam

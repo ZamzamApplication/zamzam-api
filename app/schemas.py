@@ -1033,3 +1033,39 @@ class ArchiveSessionRequest(BaseModel):
         if len(value.strip()) < 3:
             raise ValueError("A reason is required")
         return value.strip()
+
+
+class SessionScheduleRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=100)
+    weekdays: list[int] = Field(min_length=1, max_length=7)
+    start_date: date
+    end_date: date | None = None
+    timezone: str = Field(default="Africa/Cairo", max_length=64)
+    membership_mode: Literal["all", "categories", "students"] = "all"
+    member_ids: list[int] = Field(default_factory=list, max_length=1000)
+    is_active: bool = True
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        if any(day < 0 or day > 6 for day in self.weekdays) or len(set(self.weekdays)) != len(self.weekdays):
+            raise ValueError("Select unique weekdays from 0 (Sunday) to 6 (Saturday)")
+        if self.end_date and self.end_date < self.start_date:
+            raise ValueError("End date must follow start date")
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("Invalid timezone")
+        if self.membership_mode != "all" and not self.member_ids:
+            raise ValueError("Select at least one category or student")
+        if self.membership_mode == "all" and self.member_ids:
+            raise ValueError("All-student schedules must not specify member IDs")
+        self.member_ids = sorted(set(self.member_ids))
+        self.name = (self.name or "").strip() or None
+        return self
+
+
+class SkipOccurrenceRequest(BaseModel):
+    date: date
+    expected_version: int = Field(ge=1)

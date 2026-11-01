@@ -81,7 +81,7 @@ class ExcusedPeriodBehaviorTests(unittest.TestCase):
                 source = inspect.getsource(function)
                 self.assertIn(action, source)
                 self.assertIn("context.tahfiz_id", source)
-        for function in (sessions.create_session, sessions.get_session_attendance, sessions.confirm_session):
+        for function in (sessions.create_session_record, sessions.get_session_attendance, sessions.confirm_session):
             with self.subTest(function=function.__name__):
                 self.assertIn("automatic_attendance", inspect.getsource(function))
 

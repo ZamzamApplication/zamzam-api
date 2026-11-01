@@ -118,6 +118,10 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     context: TenantContext = Depends(require_tenant_admin),
 ):
+    return await create_session_record(body, db, context)
+
+
+async def create_session_record(body: CreateSessionRequest, db: AsyncSession, context: TenantContext, *, commit: bool = True):
     multiple_enabled = context.tahfiz.multiple_sessions_per_day_enabled
     if not multiple_enabled:
         duplicate = await db.scalar(select(Session.id).where(
@@ -151,9 +155,8 @@ async def create_session(
 
     result = await db.execute(
         select(Student)
-        .join(Sheikh)
         .where(
-            Sheikh.tahfiz_id == context.tahfiz_id,
+            Student.tahfiz_id == context.tahfiz_id,
             Student.status.in_(ACTIVE_STUDENT_STATUSES),
             *([Student.id.in_(body.student_ids)] if multiple_enabled else []),
         )
@@ -195,8 +198,9 @@ async def create_session(
             notes=notes,
         ))
 
-    await db.commit()
-    await db.refresh(session)
+    if commit:
+        await db.commit()
+        await db.refresh(session)
     return {
         "id": session.id,
         "date": session.date.isoformat(),
