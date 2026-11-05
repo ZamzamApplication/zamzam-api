@@ -2,16 +2,18 @@
 import json
 import secrets
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
 from app.models import (AuditLog, Student, StudentCustomField, StudentRegistrationForm,
-                        StudentRegistrationRequest, StudentStatus, Tahfiz, TahfizStatus)
+                        StudentRegistrationRequest, StudentStatus, Tahfiz, TahfizStatus,
+                        Sheikh, StudentCategory)
 from app.routers.auth import (TenantContext, require_tenant_admin, utcnow,
                               check_rate_limit, record_rate_limit, client_ip)
 from app.routers.management import (apply_student_custom_field_values, normalize_student_custom_value,
@@ -21,12 +23,25 @@ from app.schemas import CreateStudentRequest
 
 router = APIRouter(prefix="/student-registration", tags=["student-registration"])
 
+StudentField = Literal["phone", "birthday", "student_id", "parent_phones", "sheikh_id",
+                       "category_ids", "registration_date", "status", "quran_progress_enabled"]
+
 
 class FormInput(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
     public_field_ids: list[int] = Field(default_factory=list, max_length=100)
+    student_fields: list[StudentField] = Field(default_factory=lambda: ["phone", "birthday"], max_length=9)
+    required_student_fields: list[StudentField] = Field(default_factory=list, max_length=9)
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_student_fields(self):
+        if len(set(self.student_fields)) != len(self.student_fields):
+            raise ValueError("Student fields must be unique")
+        if not set(self.required_student_fields) <= set(self.student_fields):
+            raise ValueError("Required fields must be included in the form")
+        return self
 
     @field_validator("title")
     @classmethod
@@ -36,10 +51,8 @@ class FormInput(BaseModel):
         return value.strip()
 
 
-class Submission(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    phone: str | None = Field(default=None, max_length=20)
-    birthday: date | None = None
+class Submission(CreateStudentRequest):
+    model_config = ConfigDict(extra="forbid")
     answers: dict[int, str | bool | int | float | None] = Field(default_factory=dict, max_length=100)
     website: str = Field(default="", max_length=200)  # honeypot
 
@@ -72,12 +85,15 @@ def form_data(form):
     url = f"{settings.PUBLIC_WEB_URL.rstrip('/')}/register/{form.token}"
     return dict(id=form.id, title=form.title, description=form.description,
                 public_field_ids=json.loads(form.public_field_ids), is_active=form.is_active,
+                student_fields=json.loads(form.student_fields),
+                required_student_fields=json.loads(form.required_student_fields),
                 token=form.token, url=url, print_url=url + "/print")
 
 
 def request_data(row):
     return dict(id=row.id, form_id=row.form_id, name=row.name, phone=row.phone,
                 birthday=row.birthday, answers=json.loads(row.answers),
+                student_data=json.loads(row.student_data),
                 fields=json.loads(row.field_snapshot), status=row.status,
                 student_id=row.student_id, created_at=row.created_at,
                 reviewed_at=row.reviewed_at)
@@ -103,7 +119,16 @@ async def public_fields(form, db):
 async def get_public_form(token: str, db: AsyncSession = Depends(get_db)):
     form = await public_form(token, db)
     tahfiz = await db.get(Tahfiz, form.tahfiz_id)
+    selected = json.loads(form.student_fields)
+    options = {}
+    for key, model in [("sheikh_id", Sheikh), ("category_ids", StudentCategory)]:
+        if key in selected:
+            rows = (await db.execute(select(model.id, model.name).where(
+                model.tahfiz_id == form.tahfiz_id).order_by(model.name, model.id))).all()
+            options[key] = [dict(id=row.id, name=row.name) for row in rows]
     return dict(title=form.title, description=form.description, tahfiz_name=tahfiz.name,
+                student_fields=selected, required_student_fields=json.loads(form.required_student_fields),
+                student_field_options=options,
                 fields=[field_data(f) for f in await public_fields(form, db)])
 
 
@@ -115,13 +140,34 @@ async def submit(token: str, body: Submission, request: Request, db: AsyncSessio
     form = await public_form(token, db)
     if body.website:
         raise HTTPException(422, "تعذر إرسال الطلب")
+    selected = set(json.loads(form.student_fields))
+    provided = body.model_dump(mode="json", exclude_unset=True,
+                               exclude={"name", "answers", "website", "custom_field_values"})
+    if body.custom_field_values or any(
+            key not in selected and value is not None and value != "" and value != []
+            for key, value in provided.items()):
+        raise HTTPException(422, "تحتوي الإجابة على حقول غير متاحة")
+    student_data = {key: value for key, value in provided.items() if key in selected}
+    for key in json.loads(form.required_student_fields):
+        value = student_data.get(key)
+        if value is None or value == [] or (isinstance(value, str) and not value.strip()):
+            raise HTTPException(422, "يرجى استكمال بيانات الطالب المطلوبة")
+    if body.sheikh_id is not None and not await db.scalar(select(Sheikh.id).where(
+            Sheikh.id == body.sheikh_id, Sheikh.tahfiz_id == form.tahfiz_id)):
+        raise HTTPException(422, "الشيخ غير متاح")
+    if body.category_ids:
+        found = set((await db.execute(select(StudentCategory.id).where(
+            StudentCategory.id.in_(body.category_ids), StudentCategory.tahfiz_id == form.tahfiz_id))).scalars())
+        if found != set(body.category_ids):
+            raise HTTPException(422, "التصنيف غير متاح")
     fields = await public_fields(form, db)
     allowed = {f.id for f in fields}
     if set(body.answers) - allowed:
         raise HTTPException(422, "تحتوي الإجابة على حقول غير متاحة")
     answers = {str(f.id): normalize_student_custom_value(f, body.answers.get(f.id)) for f in fields}
     db.add(StudentRegistrationRequest(tahfiz_id=form.tahfiz_id, form_id=form.id,
-        name=body.name, phone=body.phone, birthday=body.birthday,
+        name=body.name, phone=student_data.get("phone"), birthday=body.birthday if "birthday" in selected else None,
+        student_data=json.dumps(student_data, ensure_ascii=False),
         answers=json.dumps(answers, ensure_ascii=False),
         field_snapshot=json.dumps([field_data(f) for f in fields], ensure_ascii=False)))
     await db.commit()
@@ -147,6 +193,8 @@ async def save_form(body, db, context, form=None):
         db.add(form)
     form.title, form.description = body.title, body.description
     form.public_field_ids, form.is_active = json.dumps(ids), body.is_active
+    form.student_fields = json.dumps(body.student_fields)
+    form.required_student_fields = json.dumps(body.required_student_fields)
     db.add(AuditLog(actor_user_id=context.user.id, tahfiz_id=context.tahfiz_id,
                     action="student_registration.form_saved", details=body.title))
     await db.commit()
@@ -209,7 +257,8 @@ async def approve(request_id: int, body: Approval, db: AsyncSession = Depends(ge
     from app.models import Sheikh, ParentPhone, ParentType
     try:
         row = await claim(request_id, "approved", db, context)
-        data = body.student
+        data = CreateStudentRequest.model_validate({
+            **json.loads(row.student_data), **body.student.model_dump(exclude_unset=True)})
         if data.sheikh_id is not None and not await db.scalar(select(Sheikh.id).where(
                 Sheikh.id == data.sheikh_id, Sheikh.tahfiz_id == context.tahfiz_id)):
             raise HTTPException(404, "Sheikh not found")

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.database import Base, get_db
 from app.models import (Student, StudentCustomField, StudentCustomFieldValue, StudentRegistrationRequest,
-                        Tahfiz, TahfizStatus, User, UserRole, Sheikh)
+                        Tahfiz, TahfizStatus, User, UserRole, Sheikh, StudentCategory, ParentPhone, StudentCategoryMembership)
 from app.routers import student_registration as intake
 from app.routers.auth import TenantContext, require_tenant_admin
 
@@ -40,6 +40,7 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             db.add_all([
                 Sheikh(id=1, name='شيخ', tahfiz_id=1), Sheikh(id=2, name='Other', tahfiz_id=2),
+                StudentCategory(id=1, name='مبتدئون', tahfiz_id=1), StudentCategory(id=2, name='Other', tahfiz_id=2),
                 StudentCustomField(id=1, tahfiz_id=1, name='المستوى', field_type='select', options='["مبتدئ", "متقدم"]', is_required=True),
                 StudentCustomField(id=2, tahfiz_id=1, name='ملاحظة داخلية', field_type='text', is_required=True),
                 StudentCustomField(id=3, tahfiz_id=2, name='Other', field_type='text'),
@@ -173,6 +174,87 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
         result = await self.client.post(f'/student-registration/requests/{rid}/approve', json=self.approval())
         self.assertEqual(result.status_code, 200, result.text)
 
+    async def configure_student_fields(self, fields, required=None):
+        response = await self.client.put(f'/student-registration/forms/{self.form["id"]}', json={
+            "title": "طلب التحاق", "public_field_ids": [1],
+            "student_fields": fields, "required_student_fields": required or [],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    async def test_existing_student_fields_are_configurable_and_round_trip_through_approval(self):
+        fields = ["phone", "birthday", "student_id", "parent_phones", "sheikh_id", "category_ids",
+                  "registration_date", "status", "quran_progress_enabled"]
+        saved = await self.configure_student_fields(fields, ["phone", "quran_progress_enabled"])
+        self.assertEqual(saved['student_fields'], fields)
+        public = (await self.client.get(self.public)).json()
+        self.assertEqual(public['required_student_fields'], ["phone", "quran_progress_enabled"])
+        self.assertEqual(public['student_field_options'], {
+            "sheikh_id": [{"id": 1, "name": "شيخ"}], "category_ids": [{"id": 1, "name": "مبتدئون"}]})
+        details = dict(phone="0123456789", birthday="2012-06-01", student_id="ST-42",
+                       registration_date="2026-11-01", status="ضيف", quran_progress_enabled=False,
+                       sheikh_id=1, category_ids=[1],
+                       parent_phones=[{"phone_number": "0109876543", "parent_type": "أم", "name": "فاطمة"}])
+        result = await self.client.post(self.public, json={"name": "أحمد", "answers": {"1": "مبتدئ"}, **details})
+        self.assertEqual(result.status_code, 201, result.text)
+        row = (await self.client.get('/student-registration/requests')).json()[0]
+        self.assertEqual(row['student_data'], details)
+        # Changing the form after submission must not erase the submitted student details.
+        await self.configure_student_fields([])
+        result = await self.client.post(f'/student-registration/requests/{row["id"]}/approve', json={
+            "student": {"name": "أحمد بعد المراجعة", "custom_field_values": {"2": "تمت المراجعة"}}})
+        self.assertEqual(result.status_code, 200, result.text)
+        async with self.sessions() as db:
+            student = await db.get(Student, result.json()['student_id'])
+            self.assertEqual((student.student_id, student.phone, student.sheikh_id), ("ST-42", details['phone'], 1))
+            self.assertEqual(str(student.birthday), "2012-06-01")
+            self.assertEqual(str(student.registration_date), "2026-11-01")
+            self.assertEqual(student.status.value, "ضيف")
+            self.assertFalse(student.quran_progress_enabled)
+            parent = await db.scalar(select(ParentPhone).where(ParentPhone.student_id == student.id))
+            self.assertEqual((parent.name, parent.phone_number), ("فاطمة", "0109876543"))
+            self.assertEqual(await db.scalar(select(StudentCategoryMembership.category_id).where(
+                StudentCategoryMembership.student_id == student.id)), 1)
+
+    async def test_hidden_required_and_invalid_student_fields_are_rejected(self):
+        await self.configure_student_fields(["phone", "quran_progress_enabled"], ["phone", "quran_progress_enabled"])
+        base = {"name": "أحمد", "answers": {"1": "مبتدئ"}, "phone": "012345", "quran_progress_enabled": False}
+        for update in [{"phone": " "}, {"phone": None}, {"quran_progress_enabled": None},
+                       {"student_id": "hidden"}, {"sheikh_id": 2}, {"category_ids": [2]},
+                       {"custom_field_values": {"2": "private"}}]:
+            response = await self.client.post(self.public, json={**base, **update})
+            self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual((await self.client.post(self.public, json={k: v for k, v in base.items() if k != 'quran_progress_enabled'})).status_code, 422)
+        self.assertEqual((await self.client.post(self.public, json=base)).status_code, 201)
+        self.assertNotIn('sheikh_id', (await self.client.get(self.public)).json()['student_field_options'])
+        await self.configure_student_fields(["sheikh_id", "category_ids", "parent_phones"])
+        for update in [{"sheikh_id": 2}, {"category_ids": [2]}, {"category_ids": [1, 1]},
+                       {"parent_phones": [{"parent_type": "unknown", "phone_number": "123"}]}]:
+            response = await self.client.post(self.public, json={"name": "أحمد", "answers": {"1": "مبتدئ"}, **update})
+            self.assertEqual(response.status_code, 422, response.text)
+
+    async def test_form_rejects_unknown_and_unselected_required_student_fields(self):
+        for fields, required in [(["tahfiz_id"], []), (["phone"], ["birthday"]), (["phone", "phone"], [])]:
+            response = await self.client.post('/student-registration/forms', json={
+                "title": "طلب", "student_fields": fields, "required_student_fields": required})
+            self.assertEqual(response.status_code, 422)
+
+    async def test_admin_can_override_and_clear_submitted_student_details(self):
+        await self.configure_student_fields(["phone", "student_id", "sheikh_id", "category_ids"])
+        result = await self.client.post(self.public, json={"name": "أحمد", "phone": "123456", "student_id": "old",
+            "sheikh_id": 1, "category_ids": [1], "answers": {"1": "مبتدئ"}})
+        self.assertEqual(result.status_code, 201, result.text)
+        row = (await self.client.get('/student-registration/requests')).json()[0]
+        result = await self.client.post(f'/student-registration/requests/{row["id"]}/approve', json=self.approval(
+            phone=None, student_id="corrected", sheikh_id=None, category_ids=[]))
+        self.assertEqual(result.status_code, 200, result.text)
+        async with self.sessions() as db:
+            student = await db.get(Student, result.json()['student_id'])
+            self.assertIsNone(student.phone)
+            self.assertIsNone(student.sheikh_id)
+            self.assertEqual(student.student_id, "corrected")
+            self.assertEqual(await db.scalar(select(func.count()).select_from(StudentCategoryMembership)), 0)
+
     async def test_rate_limit(self):
         for _ in range(10):
             await self.client.post(self.public, json={"name": "test", "answers": {"1": "مبتدئ"}})
@@ -197,10 +279,33 @@ class RegistrationMigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
             with sqlite3.connect(database) as conn:
-                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261101_35')
+                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261105_36')
                 self.assertIn('progress_quality_options', {c[1] for c in conn.execute('PRAGMA table_info(tahfiz)')})
                 self.assertIsNotNone(conn.execute("SELECT name FROM sqlite_master WHERE name='student_registration_forms'").fetchone())
                 self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+
+    def test_student_fields_migration_preserves_existing_forms_and_requests(self):
+        migration = importlib.import_module('migrations.versions.20261105_36_registration_student_fields')
+        engine = create_engine('sqlite:///:memory:')
+        with engine.begin() as conn:
+            conn.execute(text('CREATE TABLE student_registration_forms (id INTEGER PRIMARY KEY, title TEXT)'))
+            conn.execute(text('CREATE TABLE student_registration_requests (id INTEGER PRIMARY KEY, phone TEXT)'))
+            conn.execute(text("INSERT INTO student_registration_forms VALUES (1, 'Existing form')"))
+            conn.execute(text("INSERT INTO student_registration_requests VALUES (1, '0123456')"))
+            original = migration.op
+            migration.op = Operations(MigrationContext.configure(conn))
+            try:
+                migration.upgrade()
+                migration.upgrade()
+                row = conn.execute(text('SELECT title, student_fields, required_student_fields FROM student_registration_forms')).one()
+                self.assertEqual(tuple(row), ('Existing form', '["phone", "birthday"]', '[]'))
+                row = conn.execute(text('SELECT phone, student_data FROM student_registration_requests')).one()
+                self.assertEqual(tuple(row), ('0123456', '{}'))
+                migration.downgrade()
+                self.assertEqual(conn.execute(text('SELECT phone FROM student_registration_requests')).scalar(), '0123456')
+            finally:
+                migration.op = original
+        engine.dispose()
 
     def test_migration_round_trip(self):
         migration = importlib.import_module('migrations.versions.20261031_34_student_registration')

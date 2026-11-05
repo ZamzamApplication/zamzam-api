@@ -1254,6 +1254,8 @@ class StudentRegistrationForm(Base):
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     public_field_ids: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    student_fields: Mapped[str] = mapped_column(Text, default='["phone", "birthday"]', nullable=False)
+    required_student_fields: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
@@ -1269,6 +1271,7 @@ class StudentRegistrationRequest(Base):
     birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     answers: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     field_snapshot: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    student_data: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
