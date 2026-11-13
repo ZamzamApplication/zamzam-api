@@ -17,6 +17,7 @@ from app.models import (
     AuditLog,
     ExcusedWeekday,
     QuranProgressEntry,
+    QuranProgressRevision,
     Session,
     Sheikh,
     Student,
@@ -739,6 +740,11 @@ async def delete_session(
             "required_action": "reopen",
         })
 
+    # Revisions reference both the session and its progress entries.
+    await db.execute(sa_delete(QuranProgressRevision).where(
+        QuranProgressRevision.session_id == session_id,
+        QuranProgressRevision.tahfiz_id == context.tahfiz_id,
+    ))
     await db.execute(sa_delete(QuranProgressEntry).where(
         QuranProgressEntry.session_id == session_id,
         QuranProgressEntry.tahfiz_id == context.tahfiz_id,
