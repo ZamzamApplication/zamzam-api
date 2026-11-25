@@ -30,6 +30,7 @@ from app.models import (
     ACTIVE_STUDENT_STATUSES,
     Attendance,
     AuditLog,
+    CompetitionParticipant,
     DeviceSession,
     Expense,
     ExcusedWeekday,
@@ -800,6 +801,11 @@ async def delete_student_entity(
         StudentGoal.student_id == student.id,
         StudentGoal.tahfiz_id == tahfiz_id,
     ))
+    # Competition results keep the participant's name snapshot after the student is removed.
+    await db.execute(sa_update(CompetitionParticipant).where(
+        CompetitionParticipant.student_id == student.id,
+        CompetitionParticipant.tahfiz_id == tahfiz_id,
+    ).values(student_id=None))
     if not delete_attendance:
         for attendance in student.attendance_records:
             attendance.student_id = None

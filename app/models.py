@@ -1246,6 +1246,74 @@ class TripCheck(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class Competition(Base):
+    """A time-boxed challenge (e.g. Fajr attendance) with an optional public leaderboard."""
+
+    __tablename__ = "competitions"
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_competition_dates"),
+        CheckConstraint("points_per_check >= 1", name="ck_competition_points"),
+        Index("ix_competitions_tenant_start", "tahfiz_id", "start_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # draft -> active -> ended; ended is frozen until an admin reopens it.
+    status: Mapped[str] = mapped_column(String(12), default="draft", nullable=False)
+    points_per_check: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    completion_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    public_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    public_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    # "short" = first name + family initial; "full" = stored student name.
+    name_display: Mapped[str] = mapped_column(String(8), default="short", nullable=False)
+    # Number of ranked rows shown publicly; 0 shows every participant with points.
+    public_limit: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class CompetitionParticipant(Base):
+    __tablename__ = "competition_participants"
+    __table_args__ = (
+        UniqueConstraint("competition_id", "student_id", name="uq_competition_student"),
+        Index("ix_competition_participants_tenant_competition", "tahfiz_id", "competition_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False)
+    competition_id: Mapped[int] = mapped_column(ForeignKey("competitions.id"), nullable=False)
+    # Detached (NULL) when the student is deleted; the name snapshot keeps results readable.
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class CompetitionEntry(Base):
+    """One completed requirement for one participant on one day."""
+
+    __tablename__ = "competition_entries"
+    __table_args__ = (
+        UniqueConstraint("participant_id", "entry_date", name="uq_competition_entry_day"),
+        CheckConstraint("points >= 1", name="ck_competition_entry_points"),
+        Index("ix_competition_entries_tenant_competition_date", "tahfiz_id", "competition_id", "entry_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tahfiz_id: Mapped[int] = mapped_column(ForeignKey("tahfiz.id"), nullable=False)
+    competition_id: Mapped[int] = mapped_column(ForeignKey("competitions.id"), nullable=False)
+    participant_id: Mapped[int] = mapped_column(ForeignKey("competition_participants.id", ondelete="CASCADE"), nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    recorded_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 class StudentRegistrationForm(Base):
     __tablename__ = "student_registration_forms"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

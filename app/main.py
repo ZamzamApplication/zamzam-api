@@ -18,7 +18,7 @@ from app.session_scheduler import schedule_loop
 from app.routers import session_schedules
 from app.media import validate_media_token
 from app.routers.auth import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
-from app.routers import audit_logs, auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback, subscriptions, finance, personal_plans, trips, student_registration
+from app.routers import audit_logs, auth, sessions, attendance, reports, management, platform, progress, saved_filters, invitations, sync, feedback, subscriptions, finance, personal_plans, trips, student_registration, competitions
 from app.seed import seed_data
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ app.include_router(feedback.router)
 app.include_router(personal_plans.router)
 app.include_router(trips.router)
 app.include_router(student_registration.router)
+app.include_router(competitions.router)
 
 CSRF_EXEMPT_PATHS = {
     "/auth/login",
