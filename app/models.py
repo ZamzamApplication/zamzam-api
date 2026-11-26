@@ -1270,6 +1270,8 @@ class Competition(Base):
     public_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     # "short" = first name + family initial; "full" = stored student name.
     name_display: Mapped[str] = mapped_column(String(8), default="short", nullable=False)
+    # Opt-in: show each student's profile photo on the public leaderboard.
+    show_photos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Number of ranked rows shown publicly; 0 shows every participant with points.
     public_limit: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

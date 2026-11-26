@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.media import signed_media_url
 from app.models import (ACTIVE_STUDENT_STATUSES, AuditLog, Competition, CompetitionEntry, CompetitionParticipant,
                         Sheikh, Student, StudentCategoryMembership, Tahfiz, TahfizStatus, UserRole)
 from app.routers.auth import TenantContext, get_tenant_context, require_tenant_admin, student_scope_clause
@@ -56,6 +57,7 @@ class CompetitionInput(StrictInput):
     points_per_check: int = Field(default=1, ge=1, le=100)
     completion_threshold: int | None = Field(default=None, ge=1, le=100_000)
     name_display: Literal["short", "full"] = "short"
+    show_photos: bool = False
     public_limit: int = Field(default=10, ge=0, le=MAX_PARTICIPANTS)
 
     @model_validator(mode="after")
@@ -121,7 +123,7 @@ def public_url(competition: Competition) -> str | None:
 def competition_json(competition: Competition, include_link: bool) -> dict:
     data = {key: getattr(competition, key) for key in (
         "id", "title", "description", "start_date", "end_date", "status", "points_per_check",
-        "completion_threshold", "public_enabled", "name_display", "public_limit", "version", "updated_at")}
+        "completion_threshold", "public_enabled", "name_display", "show_photos", "public_limit", "version", "updated_at")}
     if include_link:
         data["public_url"] = public_url(competition)
     return data
@@ -246,7 +248,7 @@ async def competition_students(db: AsyncSession = Depends(get_db), context: Tena
 
 @router.get("/public/{token}")
 async def public_leaderboard(token: str, db: AsyncSession = Depends(get_db)):
-    """Unauthenticated, read-only leaderboard. Exposes display names and totals only."""
+    """Unauthenticated, read-only leaderboard: display names and totals, plus photos only when opted in."""
     competition = await db.scalar(select(Competition).join(Tahfiz, Tahfiz.id == Competition.tahfiz_id).where(
         Competition.public_token == token, Competition.public_enabled.is_(True),
         Competition.status.in_(("active", "ended")), Tahfiz.status == TahfizStatus.active))
@@ -257,6 +259,12 @@ async def public_leaderboard(token: str, db: AsyncSession = Depends(get_db)):
     standings = [row for row in compute_standings(competition, participants, entries) if row["points"] > 0]
     limit = competition.public_limit
     shown = [row for row in standings if not limit or row["rank"] <= limit]
+    photos: dict[int, str | None] = {}
+    if competition.show_photos:
+        ids = [row["student_id"] for row in shown if row["student_id"] is not None]
+        if ids:
+            photos = dict((await db.execute(select(Student.id, Student.profile_pic).where(
+                Student.id.in_(ids), Student.tahfiz_id == competition.tahfiz_id))).all())
     return {
         "title": competition.title,
         "description": competition.description,
@@ -269,8 +277,12 @@ async def public_leaderboard(token: str, db: AsyncSession = Depends(get_db)):
         "participant_count": len(participants),
         "hidden_count": len(participants) - len(shown),
         "updated_at": max((entry.recorded_at for entry in entries), default=competition.updated_at),
+        "show_photos": competition.show_photos,
         "leaderboard": [{key: row[key] for key in ("rank", "trophy", "points", "days", "best_streak", "completed")}
-                        | {"name": display_name(row["name"], competition.name_display)} for row in shown],
+                        | {"name": display_name(row["name"], competition.name_display),
+                           "photo": signed_media_url(photos.get(row["student_id"]), competition.tahfiz_id)
+                           if competition.show_photos else None}
+                        for row in shown],
     }
 
 

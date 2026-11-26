@@ -8,10 +8,11 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import create_engine, event, inspect, select
+from sqlalchemy import create_engine, event, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.database import Base
+from app.media import validate_media_token
 from app.models import (AuditLog, Competition, CompetitionEntry, CompetitionParticipant, Sheikh, Student,
                         StudentCategory, StudentCategoryMembership, StudentStatus, Tahfiz, TahfizStatus, User, UserRole)
 from app.routers import competitions as comp
@@ -203,8 +204,13 @@ class CompetitionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["name"] for row in board["leaderboard"]], ["أحمد م.", "علي ح."])
         self.assertEqual(board["participant_count"], 4)
         self.assertEqual(board["hidden_count"], 2)
-        self.assertEqual(set(board["leaderboard"][0]), {"rank", "trophy", "points", "days", "best_streak", "completed", "name"})
+        self.assertEqual(set(board["leaderboard"][0]), {"rank", "trophy", "points", "days", "best_streak", "completed", "name", "photo"})
         self.assertNotIn("participant_id", str(board))
+        # Photos stay hidden until the admin opts in, even when the student has one.
+        self.session.get(Student, 1).profile_pic = "1/avatar.jpg"
+        self.session.commit()
+        self.assertIsNone(board["leaderboard"][0]["photo"])
+        self.assertIsNone((await comp.public_leaderboard(token, self.db))["leaderboard"][0]["photo"])
         new_token = (await self.enable_public(competition_id, regenerate=True))["public_url"].rsplit("/", 1)[1]
         await self.assert_http(404, comp.public_leaderboard(token, self.db))
         await comp.public_leaderboard(new_token, self.db)
@@ -220,6 +226,23 @@ class CompetitionTests(unittest.IsolatedAsyncioTestCase):
         self.session.get(Tahfiz, 1).status = TahfizStatus.suspended
         self.session.commit()
         await self.assert_http(404, comp.public_leaderboard(token, self.db))
+
+    async def test_opt_in_photos_and_full_names_use_signed_tenant_media(self):
+        competition_id, ids = await self.active_with_roster()
+        self.session.get(Student, 1).profile_pic = "1/avatar.jpg"
+        self.session.commit()
+        values = dict(title="Fajr", start_date=START, end_date=END, name_display="full", show_photos=True)
+        updated = await comp.update_competition(competition_id, comp.CompetitionUpdateInput(**values, expected_version=await self.version(competition_id)), self.db, self.admin)
+        self.assertTrue(updated["show_photos"])
+        token = (await self.enable_public(competition_id))["public_url"].rsplit("/", 1)[1]
+        await self.mark(competition_id, [ids[1], ids[2]], TODAY)
+        rows = {row["name"]: row for row in (await comp.public_leaderboard(token, self.db))["leaderboard"]}
+        self.assertEqual(set(rows), {"أحمد محمد علي", "علي حسن"})
+        url = rows["أحمد محمد علي"]["photo"]
+        self.assertTrue(url.startswith("/uploads/1/avatar.jpg?token="))
+        self.assertEqual(validate_media_token(url.split("token=", 1)[1], "1/avatar.jpg"), 1)
+        self.assertIsNone(rows["علي حسن"]["photo"])  # no photo on file
+        self.assertFalse(comp.CompetitionInput(title="x", start_date=START, end_date=END).show_photos)
 
     async def test_settings_reprice_points_and_protect_recorded_dates(self):
         competition_id, ids = await self.active_with_roster()
@@ -273,13 +296,24 @@ class CompetitionMigrationTests(unittest.TestCase):
         with engine.begin() as connection:
             connection.execute(Tahfiz.__table__.insert().values(id=1, name="Existing"))
             module = importlib.import_module("migrations.versions.20261125_37_competitions")
+            photos = importlib.import_module("migrations.versions.20261126_38_competition_photos")
             with Operations.context(MigrationContext.configure(connection)):
                 module.upgrade(); module.upgrade()
+                # A competition created before photos existed.
+                connection.execute(text(
+                    "INSERT INTO competitions (id, tahfiz_id, title, description, start_date, end_date, status, points_per_check,"
+                    " public_enabled, name_display, public_limit, version, created_at, updated_at) VALUES (1, 1, 'Existing', '',"
+                    " '2026-11-01', '2026-11-30', 'active', 1, 0, 'short', 10, 1, '2026-11-01', '2026-11-01')"))
+                photos.upgrade(); photos.upgrade()
                 schema = inspect(connection)
                 for model in models:
                     self.assertEqual({c["name"] for c in schema.get_columns(model.__tablename__)},
                                      set(model.__table__.columns.keys()))
                 self.assertEqual(connection.scalar(select(Tahfiz.name)), "Existing")
+                # Existing competitions keep photos hidden after the upgrade.
+                self.assertEqual(connection.scalar(select(Competition.__table__.c.show_photos)), False)
+                photos.downgrade()
+                self.assertNotIn("show_photos", {c["name"] for c in inspect(connection).get_columns("competitions")})
                 module.downgrade()
                 self.assertFalse(names & set(inspect(connection).get_table_names()))
         engine.dispose()
