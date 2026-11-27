@@ -266,6 +266,15 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(require_tenant_admin, [d.call for d in route.dependant.dependencies])
 
 
+def alembic_head():
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    root = Path(__file__).resolve().parents[1]
+    config = Config(str(root / 'alembic.ini'))
+    config.set_main_option('script_location', str(root / 'migrations'))
+    return ScriptDirectory.from_config(config).get_current_head()
+
+
 class RegistrationMigrationTests(unittest.TestCase):
     def test_fresh_database_upgrades_full_chain_and_is_repeatable(self):
         with tempfile.TemporaryDirectory() as path:
@@ -279,7 +288,7 @@ class RegistrationMigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
             with sqlite3.connect(database) as conn:
-                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], '20261105_36')
+                self.assertEqual(conn.execute('SELECT version_num FROM alembic_version').fetchone()[0], alembic_head())
                 self.assertIn('progress_quality_options', {c[1] for c in conn.execute('PRAGMA table_info(tahfiz)')})
                 self.assertIsNotNone(conn.execute("SELECT name FROM sqlite_master WHERE name='student_registration_forms'").fetchone())
                 self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
