@@ -13,7 +13,7 @@ from app.database import Base
 from app.models import (Tahfiz, User, UserRole, SessionSchedule, SessionOccurrence, Session,
                         Student, StudentStatus, StudentCategory, StudentCategoryMembership, Attendance)
 from app.routers.auth import TenantContext
-from app.routers.session_schedules import create_schedule, update_schedule, skip_occurrence, list_schedules
+from app.routers.session_schedules import create_schedule, delete_schedule, update_schedule, skip_occurrence, list_schedules
 from app.schemas import SessionScheduleRequest, SkipOccurrenceRequest
 from app.session_scheduler import generate_schedule, occurrence_dates, lock_schedule
 from tests.test_finance_history_and_custom_progress import AsyncSessionAdapter
@@ -38,11 +38,11 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         return SessionScheduleRequest(**{**dict(weekdays=[0, 2], start_date='2026-11-01'), **values})
     async def test_generation_is_idempotent_and_tenant_scoped(self):
         result = await create_schedule(self.body(), self.db, self.context)
-        self.assertEqual([v['date'] for v in result['upcoming']], ['2026-11-01','2026-11-03','2026-11-08'])
+        self.assertEqual([v['date'] for v in result['upcoming']], ['2026-11-01'])
         row = await lock_schedule(self.db, result['id'], 1)
         await generate_schedule(self.db, row); self.session.commit()
-        self.assertEqual(self.session.query(Session).count(), 3)
-        self.assertEqual(self.session.query(Attendance).count(), 3)
+        self.assertEqual(self.session.query(Session).count(), 1)
+        self.assertEqual(self.session.query(Attendance).count(), 1)
         self.assertTrue(all(v.student_id == 1 for v in self.session.query(Attendance)))
         other = TenantContext(user=self.context.user, tahfiz=self.session.get(Tahfiz, 2))
         self.assertEqual(await list_schedules(self.db, other), [])
@@ -55,31 +55,60 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(paused['is_active'])
         row = self.session.get(SessionSchedule, result['id'])
         await generate_schedule(self.db, row, date(2026,11,8))
-        self.assertEqual(self.session.query(Session).count(), 3)
+        self.assertEqual(self.session.query(Session).count(), 1)
         with self.assertRaises(HTTPException) as error:
             await update_schedule(row.id, self.body(expected_version=1), self.db, self.context)
         self.assertEqual(error.exception.status_code, 409)
         row.is_active = True
         await generate_schedule(self.db, row, date(2026,11,8)); self.session.flush()
-        self.assertEqual(self.session.query(Session).count(), 5)
+        self.assertEqual(self.session.query(Session).count(), 2)
     async def test_skip_archives_only_pristine_sessions_and_never_recreates(self):
         result = await create_schedule(self.body(), self.db, self.context)
-        result = await skip_occurrence(result['id'], SkipOccurrenceRequest(date='2026-11-03', expected_version=1), self.db, self.context)
-        receipt = self.session.scalar(select(SessionOccurrence).where(SessionOccurrence.date == date(2026,11,3)))
-        self.assertEqual(receipt.status, 'skipped')
-        self.assertIsNotNone(self.session.get(Session, receipt.session_id).archived_at)
-        await generate_schedule(self.db, self.session.get(SessionSchedule,result['id']))
-        self.assertEqual(self.session.query(Session).count(),3)
-        attendance = self.session.scalar(select(Attendance).where(Attendance.session_id == result['upcoming'][0]['session_id']))
+        session_id = result['upcoming'][0]['session_id']
+        attendance = self.session.scalar(select(Attendance).where(Attendance.session_id == session_id))
         attendance.revision = 2; self.session.commit()
         with self.assertRaises(HTTPException) as error:
-            await skip_occurrence(result['id'],SkipOccurrenceRequest(date='2026-11-01',expected_version=2),self.db,self.context)
+            await skip_occurrence(result['id'],SkipOccurrenceRequest(date='2026-11-01',expected_version=1),self.db,self.context)
         self.assertEqual(error.exception.status_code,409)
+        attendance.revision = 1; self.session.commit()
+        result = await skip_occurrence(result['id'], SkipOccurrenceRequest(date='2026-11-01', expected_version=1), self.db, self.context)
+        receipt = self.session.scalar(select(SessionOccurrence).where(SessionOccurrence.date == date(2026,11,1)))
+        self.assertEqual(receipt.status, 'skipped')
+        self.assertIsNotNone(self.session.get(Session, session_id).archived_at)
+        await generate_schedule(self.db, self.session.get(SessionSchedule,result['id']))
+        self.assertEqual(self.session.query(Session).count(),1)
+        with self.assertRaises(HTTPException) as error:
+            await skip_occurrence(result['id'],SkipOccurrenceRequest(date='2026-11-03',expected_version=2),self.db,self.context)
+        self.assertEqual(error.exception.status_code,422)
+    async def test_future_generated_sessions_are_pruned(self):
+        result = await create_schedule(self.body(), self.db, self.context)
+        ahead = date(2026,11,3)
+        session = Session(date=ahead, tahfiz_id=1)
+        self.session.add(session); self.session.flush()
+        self.session.add(Attendance(session_id=session.id, student_id=1, tahfiz_id=1))
+        self.session.add(SessionOccurrence(schedule_id=result['id'], tahfiz_id=1, date=ahead, session_id=session.id, status='created'))
+        self.session.commit()
+        await generate_schedule(self.db, self.session.get(SessionSchedule, result['id']))
+        self.assertIsNotNone(self.session.get(Session, session.id).archived_at)
+        self.assertIsNone(self.session.scalar(select(SessionOccurrence).where(
+            SessionOccurrence.schedule_id == result['id'], SessionOccurrence.date == ahead)))
+    async def test_delete_keeps_created_sessions_and_is_tenant_scoped(self):
+        result = await create_schedule(self.body(), self.db, self.context)
+        session_id = result['upcoming'][0]['session_id']
+        other = TenantContext(user=self.context.user, tahfiz=self.session.get(Tahfiz, 2))
+        with self.assertRaises(HTTPException) as error:
+            await delete_schedule(result['id'], self.db, other)
+        self.assertEqual(error.exception.status_code, 404)
+        await delete_schedule(result['id'], self.db, self.context)
+        self.assertIsNone(self.session.get(SessionSchedule, result['id']))
+        self.assertEqual(self.session.query(SessionOccurrence).count(), 0)
+        self.assertIsNone(self.session.get(Session, session_id).archived_at)
+        self.assertEqual(await list_schedules(self.db, self.context), [])
     async def test_existing_manual_session_is_not_duplicated(self):
         self.session.add(Session(date=date(2026,11,1),tahfiz_id=1)); self.session.commit()
         result = await create_schedule(self.body(),self.db,self.context)
         self.assertEqual(result['upcoming'][0]['status'],'conflict')
-        self.assertEqual(self.session.query(Session).count(),3)
+        self.assertEqual(self.session.query(Session).count(),1)
     async def test_dynamic_categories_and_cross_tenant_members(self):
         self.context.tahfiz.multiple_sessions_per_day_enabled = True
         self.session.add_all([StudentCategory(id=1,tahfiz_id=1,name='Group'),StudentCategoryMembership(tahfiz_id=1,category_id=1,student_id=1)])
@@ -90,13 +119,15 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.session.add(Student(id=3,name='New',tahfiz_id=1,status=StudentStatus.enrolled))
         self.session.add(StudentCategoryMembership(tahfiz_id=1,category_id=1,student_id=3)); self.session.commit()
         await generate_schedule(self.db,self.session.get(SessionSchedule,result['id']),date(2026,11,8)); self.session.flush()
-        session = self.session.scalar(select(Session).where(Session.date == date(2026,11,10)))
+        session = self.session.scalar(select(Session).where(Session.date == date(2026,11,8)))
         self.assertEqual(set(self.session.scalars(select(Attendance.student_id).where(Attendance.session_id == session.id))),{1,3})
     def test_validation_and_bounds(self):
         for values in [dict(weekdays=[7]),dict(weekdays=[0,0]),dict(weekdays=[]),dict(timezone='Invalid/Zone'),dict(end_date='2026-10-31'),dict(membership_mode='students')]:
             with self.assertRaises(ValidationError): self.body(**values)
         row = SimpleNamespace(start_date=date(2026,11,1),end_date=date(2026,11,3),weekdays='[0,2]')
-        self.assertEqual(list(occurrence_dates(row,date(2026,11,1))),[date(2026,11,1),date(2026,11,3)])
+        self.assertEqual(list(occurrence_dates(row,date(2026,11,1))),[date(2026,11,1)])
+        self.assertEqual(list(occurrence_dates(row,date(2026,11,3))),[date(2026,11,3)])
+        self.assertEqual(list(occurrence_dates(row,date(2026,11,9))),[])
 
 class ScheduleMigrationTests(unittest.TestCase):
     def test_repeatable_migration_preserves_sessions(self):

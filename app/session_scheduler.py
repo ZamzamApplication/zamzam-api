@@ -5,13 +5,14 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update
+from sqlalchemy import delete as sa_delete, select, update
 from app.database import async_session
-from app.models import (ACTIVE_STUDENT_STATUSES, SessionSchedule, SessionOccurrence,
-                        Student, StudentCategoryMembership, Tahfiz, User, Session)
+from app.models import (ACTIVE_STUDENT_STATUSES, Attendance, QuranProgressEntry, SessionSchedule,
+                        SessionOccurrence, Student, StudentCategoryMembership, Tahfiz, User, Session)
 from app.routers.auth import TenantContext
 from app.schemas import CreateSessionRequest
 from app.routers.sessions import create_session_record
+from app.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,9 @@ def local_today(schedule):
 
 
 def occurrence_dates(schedule, today):
+    # Recurring halaqat are generated on the day itself, never in advance.
     start = max(schedule.start_date, today)
-    end = min(schedule.end_date or today + timedelta(days=7), today + timedelta(days=7))
+    end = min(schedule.end_date or today, today)
     weekdays = json.loads(schedule.weekdays)
     while start <= end:
         if (start.weekday() + 1) % 7 in weekdays:
@@ -40,10 +42,34 @@ async def lock_schedule(db, schedule_id, tenant_id):
     ).execution_options(populate_existing=True))
 
 
+async def prune_future_occurrences(db, row, today):
+    """Remove sessions generated ahead of their day by the old lookahead window."""
+    receipts = (await db.execute(select(SessionOccurrence).where(
+        SessionOccurrence.schedule_id == row.id, SessionOccurrence.tahfiz_id == row.tahfiz_id,
+        SessionOccurrence.date > today, SessionOccurrence.status == 'created',
+        SessionOccurrence.session_id.is_not(None)))).scalars().all()
+    for receipt in receipts:
+        session = await db.scalar(select(Session).where(
+            Session.id == receipt.session_id, Session.tahfiz_id == row.tahfiz_id).with_for_update())
+        if session is None:
+            await db.execute(sa_delete(SessionOccurrence).where(SessionOccurrence.id == receipt.id))
+            continue
+        changed_attendance = await db.scalar(select(Attendance.id).where(
+            Attendance.session_id == session.id, Attendance.revision > 1).limit(1))
+        progress = await db.scalar(select(QuranProgressEntry.id).where(
+            QuranProgressEntry.session_id == session.id).limit(1))
+        if session.is_confirmed or session.version or session.archived_at or changed_attendance or progress:
+            continue  # Preserve sessions the center already touched.
+        session.archived_at = utcnow()
+        session.version += 1
+        await db.execute(sa_delete(SessionOccurrence).where(SessionOccurrence.id == receipt.id))
+
+
 async def generate_schedule(db, row, today=None):
+    today = today or local_today(row)
+    await prune_future_occurrences(db, row, today)
     if not row.is_active:
         return
-    today = today or local_today(row)
     tahfiz = await db.scalar(select(Tahfiz).where(Tahfiz.id == row.tahfiz_id))
     if row.membership_mode != 'all' and not tahfiz.multiple_sessions_per_day_enabled:
         # Never broaden a selected roster if the center disables multiple sessions.
@@ -79,7 +105,7 @@ async def generate_schedule(db, row, today=None):
 
 async def scheduler_tick():
     async with async_session() as db:
-        ids = (await db.execute(select(SessionSchedule.id, SessionSchedule.tahfiz_id).where(SessionSchedule.is_active == True))).all()
+        ids = (await db.execute(select(SessionSchedule.id, SessionSchedule.tahfiz_id))).all()
     for schedule_id, tenant_id in ids:
         try:
             async with async_session() as db:

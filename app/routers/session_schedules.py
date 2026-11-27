@@ -1,7 +1,6 @@
 import json
-from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import (SessionSchedule, SessionOccurrence, Session, Student, StudentCategory,
@@ -18,7 +17,7 @@ async def output(db, row):
     today = local_today(row)
     receipts = (await db.execute(select(SessionOccurrence).where(
         SessionOccurrence.schedule_id == row.id, SessionOccurrence.tahfiz_id == row.tahfiz_id,
-        SessionOccurrence.date >= today, SessionOccurrence.date <= today + timedelta(days=7)
+        SessionOccurrence.date == today
     ).order_by(SessionOccurrence.date))).scalars().all()
     upcoming = [{'date': receipt.date.isoformat(), 'session_id': receipt.session_id, 'status': receipt.status} for receipt in receipts]
     return dict(id=row.id, name=row.name, weekdays=json.loads(row.weekdays), start_date=row.start_date.isoformat(),
@@ -118,3 +117,18 @@ async def skip_occurrence(schedule_id: int, body: SkipOccurrenceRequest, db: Asy
     result = await output(db, row)
     await db.commit()
     return result
+
+
+@router.delete('/{schedule_id}')
+async def delete_schedule(schedule_id: int, db: AsyncSession = Depends(get_db), context: TenantContext = Depends(require_tenant_admin)):
+    """Stop a weekly schedule for good. Halaqat it already created are kept."""
+    row = await lock_schedule(db, schedule_id, context.tahfiz_id)
+    if row is None:
+        raise HTTPException(404, 'الجدول غير موجود')
+    audit(db, context, row, 'deleted')
+    await db.execute(sa_delete(SessionOccurrence).where(
+        SessionOccurrence.schedule_id == row.id, SessionOccurrence.tahfiz_id == context.tahfiz_id))
+    await db.execute(sa_delete(SessionSchedule).where(
+        SessionSchedule.id == row.id, SessionSchedule.tahfiz_id == context.tahfiz_id))
+    await db.commit()
+    return {'ok': True}
