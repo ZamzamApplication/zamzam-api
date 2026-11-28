@@ -1198,6 +1198,17 @@ async def student_profile(
         .group_by(Attendance.status)
     )).all()
     attendance_counts = {status: count for status, count in attendance_rows}
+    recent_attendance_rows = (await db.execute(
+        select(Session.id, Session.date, Session.name, Attendance.status)
+        .join(Session, Session.id == Attendance.session_id)
+        .where(
+            Attendance.student_id == student.id,
+            Attendance.tahfiz_id == context.tahfiz_id,
+            Session.archived_at.is_(None),
+        )
+        .order_by(Session.date.desc(), Session.daily_sequence.desc())
+        .limit(10)
+    )).all()
     progress_count, average_quality = (await db.execute(
         select(
             func.count(QuranProgressEntry.id),
@@ -1264,6 +1275,10 @@ async def student_profile(
                 "created_at": warning.created_at.isoformat(),
             }
             for warning in student.warnings
+        ],
+        "recent_attendance": [
+            {"session_id": session_id, "date": session_date.isoformat(), "session_name": session_name, "status": status}
+            for session_id, session_date, session_name, status in recent_attendance_rows
         ],
         "attendance": {
             "total": sum(attendance_counts.values()),
